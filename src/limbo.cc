@@ -5,168 +5,177 @@
 namespace lf
 {
 
-Limbo::Limbo()
-    : latest_epoch_(0),
-      first_active_epoch_(1),
-      head_group_(nullptr),
-      tail_group_(nullptr),
-      head_handle_(nullptr),
-      tail_handle_(nullptr)
-{
-}
+volatile Epoch global_epoch = 0;
+std::vector<ThreadInfo> *g_all_threads;
 
-Limbo::~Limbo()
+inline uint32_t LimboGroup::clean_until(ThreadInfo &ti, Epoch epoch_bound, uint32_t count)
 {
-    std::lock_guard<std::mutex> lck(mutex_);
-    assert(head_handle_ == nullptr);
-
-    for (LimboGroup *next = (head_group_ ? head_group_->next : nullptr);
-         head_group_ != nullptr;
-         head_group_ = next, next = (next == nullptr ? nullptr : next->next))
+    Epoch epoch = 0;
+    while (head_ != tail_)
     {
-        for (int32_t i = 0; i < head_group_->tail; i++)
+        if (is_epoch(e_[head_]))
         {
-            free(head_group_->e[i]);
+            epoch = clear_mask(e_[head_]);
+            if (epoch_bound < epoch)
+            {
+                break;
+            }
         }
-        free(head_group_);
+        else
+        {
+            free((void *)(e_[head_]));
+            --count;
+            if (!count)
+            {
+                e_[head_] = set_mask(epoch);
+                break;
+            }
+        }
+        ++head_;
     }
-    tail_group_ = nullptr;
+    if (head_ == tail_)
+    {
+        head_ = tail_ = 0;
+    }
+    return count;
 }
 
-LimboHandle *Limbo::new_handle()
+ThreadInfo::ThreadInfo()
+    : index_(0),
+      handle_cnt_(0),
+      empty_handle_(nullptr),
+      min_epoch_(0),
+      group_head_(nullptr),
+      group_tail_(nullptr)
 {
-    std::lock_guard<std::mutex> lck(mutex_);
-    int64_t my_epoch = ++latest_epoch_;
+    group_head_ = group_tail_ = new LimboGroup();
+}
 
-    LimboHandle *handle = new LimboHandle(tail_handle_, nullptr, this, my_epoch);
+ThreadInfo::~ThreadInfo()
+{
+}
 
-    if (tail_handle_)
+LimboHandle *ThreadInfo::new_handle()
+{
+    LimboHandle *handle = nullptr;
+    if (empty_handle_)
     {
-        tail_handle_->next_ = handle;
+        handle = empty_handle_;
+        empty_handle_ = empty_handle_->next_;
     }
-
-    tail_handle_ = handle;
-
-    if (head_handle_ == nullptr)
+    else
     {
-        head_handle_ = handle;
+        handle = new LimboHandle();
+        handle_cnt_++;
     }
+    handle->ti_ = this;
+    handle->my_epoch_ = atomic_add64(&global_epoch, 1) + 1;
+    //handle->my_epoch_ = __atomic_fetch_add(&global_epoch, 1, __ATOMIC_ACQ_REL);
+    //handle->my_epoch_ = ++global_epoch;
+    
+    link(limbo_handle_.prev_, handle, &limbo_handle_);
+    min_epoch_ = limbo_handle_.next_->my_epoch_;
 
     return handle;
 }
 
-void Limbo::release_handle(LimboHandle *handle)
+void ThreadInfo::delete_handle(LimboHandle *handle)
 {
-    std::lock_guard<std::mutex> lck(mutex_);
+    Epoch epoch = min_epoch_;
+    assert(handle != &limbo_handle_);
+    handle->prev_->next_ = handle->next_;
+    handle->next_->prev_ = handle->prev_;
 
-    if (handle->head_group_)
-    {
-        assert(handle->tail_group_);
-        // set epoch
-        for (LimboGroup *g = handle->head_group_; g != nullptr; g = g->next)
-        {
-            g->epoch = latest_epoch_;
-        }
-        // limbogroup list
-        if (tail_group_)
-        {
-            tail_group_->next = handle->head_group_;
-        }
-        else
-        {
-            assert(head_group_ == nullptr);
-            head_group_ = handle->head_group_;
-        }
-        tail_group_ = handle->tail_group_;
-
-        handle->head_group_ = nullptr;
-        handle->tail_group_ = nullptr;
-    }
-
-    // handle list
-    if (handle->prev_)
-    {
-        handle->prev_->next_ = handle->next_;
-    }
-    else
-    {
-        head_handle_ = handle->next_;
-        first_active_epoch_ = (head_handle_ ? head_handle_->my_epoch_ : latest_epoch_ + 1);
-    }
-    if (handle->next_)
-    {
-        handle->next_->prev_ = handle->prev_;
-    }
-    else
-    {
-        tail_handle_ = handle->prev_;
-    }
     handle->prev_ = nullptr;
-    handle->next_ = nullptr;
+    handle->next_ = empty_handle_;
+    empty_handle_ = handle;
+    min_epoch_ = limbo_handle_.next_->my_epoch_;
+    if (epoch != min_epoch_)
+    {
+        hard_free();
+    }
 }
 
-void Limbo::try_free_some()
+void ThreadInfo::link(LimboHandle *prev, LimboHandle *cur, LimboHandle *next)
 {
-    LimboGroup *head = nullptr;
-    LimboGroup *tail = nullptr;
-    {
-        std::lock_guard<std::mutex> lck(mutex_);
+    prev->next_ = cur;
+    cur->prev_ = prev;
+    cur->next_ = next;
+    next->prev_ = cur;
+}
 
-        if ((!head_group_) || (head_group_->epoch >= first_active_epoch_))
+void ThreadInfo::hard_free()
+{
+    LimboGroup *empty_head = nullptr;
+    LimboGroup *empty_tail = nullptr;
+    uint32_t count = 1024*10;
+
+    Epoch epoch_bound = min_active_epoch() - 1;
+    if (group_head_->head_ == group_head_->tail_ ||
+        group_head_->first_epoch() > epoch_bound)
+    {
+        return;
+    }
+    while (count)
+    {
+        count = group_head_->clean_until(*this, epoch_bound, count);
+        if (group_head_->head_ != group_head_->tail_)
         {
+            break;
+        }
+        if (!empty_head)
+        {
+            empty_head = group_head_;
+        }
+        empty_tail = group_head_;
+        if (group_head_ == group_tail_)
+        {
+            group_head_ = group_tail_ = empty_head;
             return;
         }
-        head = head_group_;
-        assert(head);
-
-        for (tail = head_group_->next;
-             (tail != nullptr) && (tail->epoch < first_active_epoch_);
-             tail = tail->next)
-        {
-        }
-        head_group_ = tail;
-        if (tail == nullptr)
-        {
-            tail_group_ = nullptr;
-        }
+        group_head_ = group_head_->next_;
     }
-
-    for (LimboGroup *next = (head ? head->next : nullptr);
-         head != tail;
-         head = next, next = (next == nullptr ? nullptr : next->next))
+    if (empty_head)
     {
-        for (int32_t i = 0; i < head->tail; i++)
-        {
-            free(head->e[i]);
-        }
-        free(head);
+        empty_tail->next_ = group_tail_->next_;
+        group_tail_->next_ = empty_head;
     }
+    return;
 }
 
-void LimboHandle::dealloc(void *p)
+void ThreadInfo::dealloc(void *p)
 {
-    if ((tail_group_ == nullptr) ||
-        (tail_group_->tail >= tail_group_->capacity))
+    if (!p)
+        return;
+    if (group_tail_->tail_ + 2 > group_tail_->capacity)
     {
-        // expand
-        LimboGroup *ng = (LimboGroup *)alloc(sizeof(LimboGroup));
-        if (tail_group_)
-        {
-            tail_group_->next = ng;
-        }
-        tail_group_ = ng;
-        if (!head_group_)
-        {
-            head_group_ = tail_group_;
-        }
+        refill_group();
     }
-    tail_group_->e[(tail_group_->tail)++] = p;
+    Epoch epoch = atomic_load(&global_epoch);
+    //Epoch epoch = __atomic_load_n (&global_epoch, __ATOMIC_ACQUIRE);
+    //Epoch epoch = global_epoch;
+    
+    group_tail_->push_back(p, epoch);
 }
 
-LimboHandle::~LimboHandle()
+void ThreadInfo::refill_group()
 {
-    limbo_->release_handle(this);
-    limbo_->try_free_some();
+    if (!group_tail_->next_)
+    {
+        group_tail_->next_ = new LimboGroup();
+    }
+    group_tail_ = group_tail_->next_;
+    assert(group_tail_->head_ == 0 && group_tail_->tail_ == 0);
 }
+
+  void *LimboHandle::alloc(size_t size)
+  {
+    return ti_->alloc(size);
+  }
+
+  void LimboHandle::dealloc(void *p)
+  {
+    ti_->dealloc(p);
+  }
 
 } // end namespace

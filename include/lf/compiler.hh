@@ -21,6 +21,16 @@ static const bool lfLittleEndian = PLATFORM_IS_LITTLE_ENDIAN;
 #define LIKELY(x)   (__builtin_expect(!!(x), 1))
 #define UNLIKELY(x) (__builtin_expect(!!(x), 0))
 
+static inline int64_t atomic_load(int64_t volatile *a)
+{
+    return __atomic_load_n (a, __ATOMIC_SEQ_CST);
+}
+
+static inline uint64_t atomic_load(uint64_t volatile *a)
+{
+    return __atomic_load_n (a, __ATOMIC_SEQ_CST);
+}
+
 static inline int atomic_cas32(int32_t volatile *a, int32_t *cmp, int32_t set)
 {
     return __atomic_compare_exchange_n(a, cmp, set, 0,
@@ -45,6 +55,11 @@ static inline int32_t atomic_add32(int32_t volatile *a, int32_t v)
 }
 
 static inline int64_t atomic_add64(int64_t volatile *a, int64_t v)
+{
+    return __atomic_fetch_add(a, v, __ATOMIC_SEQ_CST);
+}
+
+static inline uint64_t atomic_add64(uint64_t volatile *a, uint64_t v)
 {
     return __atomic_fetch_add(a, v, __ATOMIC_SEQ_CST);
 }
