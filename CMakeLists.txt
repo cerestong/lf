@@ -31,6 +31,8 @@ set(HEADER
     include/lf/auto_roll_logger.hh
     include/lf/time.hh
     include/lf/limbo.hh
+    include/lf/wfmcas.hh
+    include/lf/lf.hh
     #posix
     include/lf/posix_logger.hh
 )
@@ -51,6 +53,8 @@ set(SOURCE
     src/auto_roll_logger.cc
     src/time.cc
     src/limbo.cc
+    src/wfmcas.cc
+    src/lf.cc
     #posix
     src/posix_time_util.cc
     src/posix_env_util.cc
@@ -69,3 +73,10 @@ add_executable(test-limbo ${HEADER} ${SOURCE} test/limbo-test.cc)
 target_compile_options( test-limbo PUBLIC -std=c++11 -w -Wall )
 target_link_libraries(test-limbo pthread)
 
+add_executable(test-odd ${HEADER} ${SOURCE} test/odd_test.cc)
+target_compile_options( test-odd PUBLIC -std=c++11 -w -Wall )
+target_link_libraries(test-odd pthread)
+
+add_executable(test-wfmcas ${HEADER} ${SOURCE} test/wfmcas-test.cc)
+target_compile_options( test-wfmcas PUBLIC -std=c++11 -w -Wall )
+target_link_libraries(test-wfmcas pthread)
