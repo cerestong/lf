@@ -26,10 +26,6 @@ struct MCasThreadCtx
     size_t thread_id;  // thread-local 线程ID
     size_t check_id;   // thread-local 用于线程检查的id
     int recur_depth;   // thread-local 用于标识递归深度（帮助其他线程完成operations）
-    MCasHelper *tl_op; // thread-local 用于标识线程自己的operation
-    jmp_buf env;       // 标记full return
-    std::vector<MCasHelper *> mchs_buf;
-    size_t mchs_init_length;
 };
 
 void place_mcas_helper(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
@@ -38,8 +34,8 @@ void place_mcas_helper(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
 bool should_replace(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
                     intptr_t ev, MCasHelper *mch);
 void help_if_needed(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl);
-bool help_complete(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
-                   CasRow *cr);
+int help_complete(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
+                  CasRow *cr);
 void remove_mcas_helper(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
                         bool passed, CasRow *m, CasRow *lastRow);
 
@@ -64,8 +60,6 @@ MCasThreadCtx *init_mcas_thread_ctx(size_t thd_id)
     ctx->thread_id = thd_id;
     ctx->check_id = (thd_id + 1) % gMCasThreadNo;
     ctx->recur_depth = 0;
-    ctx->tl_op = nullptr;
-    ctx->mchs_buf.reserve(gMCasThreadNo);
     return ctx;
 }
 
@@ -99,7 +93,6 @@ bool invoke_mcas(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
     CasRow *ori_mcasp = mcasp;
     bool res = false;
     thd_ctx->recur_depth = 0;
-    thd_ctx->mchs_buf.resize(0);
     // 开始操作之前先查看是否需要帮助其他线程，帮助一直被抢占的线程完成操作
     help_if_needed(thd_ctx, limbo_hdl);
     place_mcas_helper(thd_ctx, limbo_hdl, mcasp++, last_row, true);
@@ -125,11 +118,18 @@ bool invoke_mcas(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
     res = ((intptr_t)(last_row->mch) != mch_fail_flag);
     // 将MCasHelper替换为真实值
     remove_mcas_helper(thd_ctx, limbo_hdl, res, ori_mcasp, last_row);
-    assert(thd_ctx->mchs_buf.empty());
 
     return res;
 }
 
+inline void set_mcas_fail(CasRow *cr, CasRow *last_row)
+{
+    void *pnull = nullptr;
+    if (atomic_casptr((void **)(&cr->mch), (void **)(&pnull), (void *)mch_fail_flag))
+    {
+        atomic_casptr((void **)(&last_row->mch), (void **)(&pnull), (void *)mch_fail_flag);
+    }
+}
 // 如果address的逻辑值等于expectedValue,则设置address值为MCasHelper地址
 // 先为address设置MCasHelper, 再为CasRow关联MCasHelper
 // 如果address的逻辑值不等于expectedValue,则在返回前设置cr->mch和lastRow->mch为~0x0
@@ -143,28 +143,28 @@ void place_mcas_helper(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
     intptr_t evalue = cr->expected_value;
     MCasHelper *mch = nullptr;
     mch = allocate_mcas_helper(thd_ctx, limbo_hdl, cr);
-    thd_ctx->mchs_buf.push_back(mch);
     intptr_t cvalue = *address;
     int tries = 0;
     while (firstTime || cr->mch == nullptr)
     {
         if (tries++ == maxFail)
         {
+            if (thd_ctx->recur_depth > 0)
+            {
+                set_mcas_fail(cr, last_row);
+                //log("%p direct dealloc %p from 5", thd_ctx, mch);
+                limbo_hdl->dealloc(mch);
+                return;
+            }
+
             if (firstTime)
             {
-                thd_ctx->tl_op = mch;
                 firstTime = false;
             }
             // 在尝试maxFail次后，线程将自己的MCAS写到全局变量pendingOpTable[threadID]里
             // 其他线程保证最总会看到此操作，并会尝试帮助完成此操作。
             // CasRow和MCasHelper的关联，保证不会有多个线程去尝试完成同一个操作
-            gPendingOpTable[thd_ctx->thread_id] = thd_ctx->tl_op;
-            if (thd_ctx->recur_depth > 0)
-            {
-                // Full return指的是返回直到开始执行自己的操作
-                //log("%p longjmp from place_mcas_helper, recur_depth %d", thd_ctx, thd_ctx->recur_depth);
-                longjmp(thd_ctx->env, 1);
-            }
+            gPendingOpTable[thd_ctx->thread_id] = mch;
         }
         if (!is_mcas_helper(cvalue))
         {
@@ -188,9 +188,7 @@ void place_mcas_helper(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
                         limbo_hdl->dealloc(mch);
                     }
                 }
-                thd_ctx->mchs_buf.pop_back();
                 //log("%p data return 1", thd_ctx);
-
                 return;
             }
             else if (is_mcas_helper(ev))
@@ -234,7 +232,6 @@ void place_mcas_helper(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
                 if (mch != emch)
                 {
                     //log("%p direct dealloc %p from 3", thd_ctx, mch);
-                    thd_ctx->mchs_buf.pop_back();
                     limbo_hdl->dealloc(mch);
                 }
                 return;
@@ -259,7 +256,6 @@ void place_mcas_helper(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
                             limbo_hdl->dealloc(mch);
                         }
                     }
-                    thd_ctx->mchs_buf.pop_back();
                     //log("%p should_replace return 1", thd_ctx);
                     return;
                 }
@@ -278,20 +274,14 @@ void place_mcas_helper(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
         }
         // cr->mch == null 标识此操作失败
         // 设置cr->mch 和 lastRow->mch 为~0x0
-        void *pnull = nullptr;
-        if (atomic_casptr((void **)(&cr->mch), (void **)(&pnull), (void *)mch_fail_flag))
-        {
-            atomic_casptr((void **)(&last_row->mch), (void **)(&pnull), (void *)mch_fail_flag);
-        }
+        set_mcas_fail(cr, last_row);
         //log("%p direct dealloc %p from 5", thd_ctx, mch);
-        thd_ctx->mchs_buf.pop_back();
         limbo_hdl->dealloc(mch);
 
         return;
     }
 
     //log("%p direct dealloc %p from 6", thd_ctx, mch);
-    thd_ctx->mchs_buf.pop_back();
     limbo_hdl->dealloc(mch);
     //log("%p place X, %d, cr %p", thd_ctx, thd_ctx->recur_depth, cr);
     return;
@@ -312,31 +302,21 @@ bool should_replace(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
     else
     {
         // 调用helpComplete,确保引用到的MCAS处于完成状态。
-        bool res = help_complete(thd_ctx, limbo_hdl, cr);
-        if (res && (cr->mch == mch))
+        int res = help_complete(thd_ctx, limbo_hdl, cr);
+        if ((res == 0) && (cr->mch == mch))
         {
-            if (cr->new_value == ev)
-            {
-                return true;
-            }
-            else
-            {
-                return false;
-            }
+            return (cr->new_value == ev);
+        }
+        else if (res == -1)
+        {
+            return false;
         }
         else
         {
             // 1. res==false: cr标识的MCAS无效，使用ev
             // 2. res == true && cr->mch != mch , 意味着mch标识的cr已经由其他线程完成。
             //    标识mch的线程会用ev回复address的值
-            if (cr->expected_value == ev)
-            {
-                return true;
-            }
-            else
-            {
-                return false;
-            }
+            return (cr->expected_value == ev);
         }
     }
 }
@@ -357,33 +337,10 @@ void help_if_needed(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl)
     }
 }
 
-bool help_complete(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
-                   CasRow *cr)
+// ret: -1 full return, 0 sucess, 1  false
+int help_complete(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
+                  CasRow *cr)
 {
-    if (thd_ctx->recur_depth == 0)
-    {
-        thd_ctx->mchs_init_length = thd_ctx->mchs_buf.size();
-        if (thd_ctx->mchs_init_length != 1)
-        {
-            //log("%p mchs_init_length %d", thd_ctx, thd_ctx->mchs_init_length);
-        }
-        if (setjmp(thd_ctx->env) != 0)
-        {
-            assert(false);
-            // full return
-            thd_ctx->recur_depth = 0;
-
-            //log("%p FULL RETURN mchs_buf.size: %d", thd_ctx, thd_ctx->mchs_buf.size());
-            for (size_t i = thd_ctx->mchs_init_length; i < thd_ctx->mchs_buf.size(); i++)
-            {
-                //log("%p FULL RETURN direct dealloc %p", thd_ctx, thd_ctx->mchs_buf[i]);
-                limbo_hdl->dealloc(thd_ctx->mchs_buf[i]);
-            }
-            assert(thd_ctx->mchs_buf.size() > 1);
-            thd_ctx->mchs_buf.resize(thd_ctx->mchs_init_length);
-            return false;
-        }
-    }
     thd_ctx->recur_depth++;
     if (thd_ctx->recur_depth > gMCasThreadNo)
     {
@@ -393,7 +350,7 @@ bool help_complete(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
 		线程应该回去处理自己的操作，增加failCount,尝试重新获取address
 		*/
         //log("%p longjmp from help_complete, recur_depth %d", thd_ctx, thd_ctx->recur_depth);
-        longjmp(thd_ctx->env, 1);
+        return -1;
     }
     // 获取lastRow位置,通过lastRow获知操作是否已经结束。
     CasRow *last_row = cr + 1;
@@ -419,7 +376,7 @@ bool help_complete(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
         }
     } while ((cr++) != last_row);
     thd_ctx->recur_depth--;
-    return ((intptr_t)last_row->mch != mch_fail_flag);
+    return ((intptr_t)last_row->mch != mch_fail_flag) ? 0 : 1;
 }
 
 void remove_mcas_helper(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
@@ -460,14 +417,19 @@ bool mcas(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
         return true;
     }
     std::sort(desc.begin(), desc.end(), sort_by_address_desc);
-    CasRow tail;
-    tail.address = end_of_casrow;
-    desc.push_back(tail);
 
-    // init thd_ctx
-    CasRow *mcasp = &(desc[0]);
-    CasRow *last_row = &(desc[desc.size() - 2]);
-    return invoke_mcas(thd_ctx, limbo_hdl, mcasp, last_row);
+    CasRow *mcasp = (CasRow *)limbo_hdl->alloc(sizeof(CasRow) * (desc.size()+1));
+    for (size_t i = 0; i < desc.size(); i++)
+    {
+        mcasp[i] = desc[i];
+    }
+    mcasp[desc.size()].address = end_of_casrow;
+    CasRow *last_row = mcasp+desc.size()-1;
+
+    bool ret = invoke_mcas(thd_ctx, limbo_hdl, mcasp, last_row);
+
+    limbo_hdl->dealloc(mcasp);
+    return ret;
 }
 
 intptr_t mcas_read(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
@@ -482,8 +444,8 @@ intptr_t mcas_read(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
     else
     {
         MCasHelper *mch = (MCasHelper *)mcas_helper_unmask(cvalue);
-        bool res = help_complete(thd_ctx, limbo_hdl, mch->cr);
-        if (res && (mch->cr->mch == mch))
+        int res = help_complete(thd_ctx, limbo_hdl, mch->cr);
+        if ((res == 0) && (mch->cr->mch == mch))
         {
             return mch->cr->new_value;
         }

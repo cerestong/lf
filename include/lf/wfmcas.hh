@@ -17,6 +17,7 @@ struct CasRow
     intptr_t expected_value;
     intptr_t new_value;
     volatile MCasHelper *mch; // 只从null 到非null值，之后就不会变
+    
     CasRow() : address(nullptr), expected_value(0), new_value(0), mch(nullptr) {}
     CasRow(intptr_t *addr, intptr_t ev, intptr_t nv)
         : address(addr), expected_value(ev), new_value(nv), mch(nullptr) {}
