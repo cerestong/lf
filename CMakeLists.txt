@@ -35,6 +35,7 @@ set(HEADER
     include/lf/lf.hh
     #posix
     include/lf/posix_logger.hh
+    include/lf/random.hh
 )
 
 set(SOURCE
@@ -59,6 +60,7 @@ set(SOURCE
     src/posix_time_util.cc
     src/posix_env_util.cc
     src/posix_logger.cc
+    src/random.cc
 )
 
 add_executable(lf-test ${HEADER} ${SOURCE} main.cc)
