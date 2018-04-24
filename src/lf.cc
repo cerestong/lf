@@ -14,4 +14,13 @@ namespace lf {
 
         return ret;
     }
+
+    void deinit_lf_library()
+    {
+        if (g_all_threads)
+        {
+            delete g_all_threads;
+            g_all_threads = nullptr;
+        }
+    }    
 } // end namespace

@@ -53,6 +53,21 @@ ThreadInfo::ThreadInfo()
 
 ThreadInfo::~ThreadInfo()
 {
+    assert(limbo_handle_.prev_ == limbo_handle_.next_);
+    assert(limbo_handle_.prev_ = &limbo_handle_);
+    while(empty_handle_)
+    {
+        LimboHandle *next = empty_handle_->next_;
+        delete empty_handle_;
+        empty_handle_ = next;
+    }
+    while(group_head_)
+    {
+        LimboGroup *next = group_head_->next_;
+        delete group_head_;
+        group_head_ = next;
+    }
+    group_tail_ = nullptr;
 }
 
 LimboHandle *ThreadInfo::new_handle()
@@ -72,7 +87,7 @@ LimboHandle *ThreadInfo::new_handle()
     handle->my_epoch_ = atomic_add64(&global_epoch, 1) + 1;
     //handle->my_epoch_ = __atomic_fetch_add(&global_epoch, 1, __ATOMIC_ACQ_REL);
     //handle->my_epoch_ = ++global_epoch;
-    
+
     link(limbo_handle_.prev_, handle, &limbo_handle_);
     min_epoch_ = limbo_handle_.next_->my_epoch_;
 
@@ -108,7 +123,7 @@ void ThreadInfo::hard_free()
 {
     LimboGroup *empty_head = nullptr;
     LimboGroup *empty_tail = nullptr;
-    uint32_t count = 1024*10;
+    uint32_t count = 1024 * 10;
 
     Epoch epoch_bound = min_active_epoch() - 1;
     if (group_head_->head_ == group_head_->tail_ ||
@@ -154,7 +169,7 @@ void ThreadInfo::dealloc(void *p)
     Epoch epoch = atomic_load(&global_epoch);
     //Epoch epoch = __atomic_load_n (&global_epoch, __ATOMIC_ACQUIRE);
     //Epoch epoch = global_epoch;
-    
+
     group_tail_->push_back(p, epoch);
 }
 
@@ -168,14 +183,14 @@ void ThreadInfo::refill_group()
     assert(group_tail_->head_ == 0 && group_tail_->tail_ == 0);
 }
 
-  void *LimboHandle::alloc(size_t size)
-  {
+void *LimboHandle::alloc(size_t size)
+{
     return ti_->alloc(size);
-  }
+}
 
-  void LimboHandle::dealloc(void *p)
-  {
+void LimboHandle::dealloc(void *p)
+{
     ti_->dealloc(p);
-  }
+}
 
 } // end namespace

@@ -31,6 +31,11 @@ static inline uint64_t atomic_load(uint64_t volatile *a)
     return __atomic_load_n (a, __ATOMIC_SEQ_CST);
 }
 
+static inline void * atomic_loadptr(void *volatile *a)
+{
+    return __atomic_load_n (a, __ATOMIC_SEQ_CST);
+}
+
 static inline int atomic_cas32(int32_t volatile *a, int32_t *cmp, int32_t set)
 {
     return __atomic_compare_exchange_n(a, cmp, set, 0,

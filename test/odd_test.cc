@@ -31,7 +31,9 @@ int main(int argc, char **argv)
     lf::log("rough_log2(-11111) %d", rough_log2(-11111));
 
     lf::log("-10 %x", -10);
-    lf::log("-10 >> 1 %x", -10 >> 1);    
+    lf::log("-10 >> 1 %x", -10 >> 1);   
+
+    lf::log("sizeof(intptr_t) %d", sizeof(intptr_t)); 
         
     return 0;
 }
