@@ -2,6 +2,7 @@
 #include "lf/logger.hh"
 #include "lf/wfmcas.hh"
 #include "lf/time_util.hh"
+#include "lf/random.hh"
 #include <thread>
 
 intptr_t g_array[2] = {0};
@@ -29,8 +30,10 @@ void single_thread_test(Ctx *ctx)
         std::vector<lf::CasRow> desc;
         intptr_t g1 = lf::mcas_read(ctx->mcas_ctx, handle, g_array);
         intptr_t g2 = lf::mcas_read(ctx->mcas_ctx, handle, g_array + 1);
-        desc.push_back(lf::CasRow(g_array, g1, i * (ctx->i + 1)));
-        desc.push_back(lf::CasRow(g_array + 1, g2, i * (ctx->i + 1)));
+        intptr_t e1 = lf::Random::get_tls_instance()->uniform(50);
+        intptr_t e2 = lf::Random::get_tls_instance()->uniform(50);        
+        desc.push_back(lf::CasRow(g_array, g1, e1));
+        desc.push_back(lf::CasRow(g_array + 1, g2, e2));
 
         bool ret = lf::mcas(ctx->mcas_ctx, handle, desc);
 
@@ -58,7 +61,7 @@ void multi_thread_test(int thd_no)
     for (int i = 0; i < thd_no; i++)
     {
         ctx[i].i = i;
-        ctx[i].loop_cnt = 2e2;
+        ctx[i].loop_cnt = 2e1;
         ctx[i].ti = &((*lf::g_all_threads)[i]);
         ctx[i].mcas_ctx = lf::init_mcas_thread_ctx(i);
         ctx[i].thd = new std::thread(single_thread_test, ctx + i);
@@ -88,10 +91,10 @@ void multi_thread_test(int thd_no)
 
 int main(int argc, char **argv)
 {
-    int work_thread_no = 6;
+    int work_thread_no = 1;
     lf::Status sts = lf::init_lf_library(work_thread_no);
 
-    lf::g_stdout_logger_on = true;
+    lf::g_stdout_logger_on = false;
     multi_thread_test(work_thread_no);
 
     lf::deinit_lf_library();

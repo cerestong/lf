@@ -53,6 +53,7 @@ ThreadInfo::ThreadInfo()
 
 ThreadInfo::~ThreadInfo()
 {
+    hard_free();
     assert(limbo_handle_.prev_ == limbo_handle_.next_);
     assert(limbo_handle_.prev_ = &limbo_handle_);
     while(empty_handle_)
