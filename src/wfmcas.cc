@@ -98,7 +98,6 @@ bool invoke_mcas(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
     thd_ctx->recur_depth = 0;
     // 开始操作之前先查看是否需要帮助其他线程，帮助一直被抢占的线程完成操作
     help_if_needed(thd_ctx, limbo_hdl);
-    place_mcas_helper(thd_ctx, limbo_hdl, mcasp++, last_row);
 
     // 调用placeMCasHelper,直到持有所有的addresses，或失败。
     // 中间线程可能被系统多次调度
