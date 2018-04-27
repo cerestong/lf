@@ -19,7 +19,7 @@ intptr_t *end_of_casrow = (intptr_t *)1;
 
 struct MCasHelper
 {
-    CasRow *cr; // 只有在cr->mch == this, MCasHelper与CasRow关联才有效
+    volatile CasRow* cr; // 只有在cr->mch == this, MCasHelper与CasRow关联才有效
 };
 
 // 每个工作线程持有一个threadCtx，相当于__thread 变量
@@ -334,7 +334,7 @@ void place_mcas_helper(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
 bool should_replace(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
                     intptr_t ev, MCasHelper *mch)
 {
-    CasRow *cr = mch->cr;
+    CasRow *cr = (CasRow *)mch->cr;
     // 检查mch引用的cr的expectedValue和newValue值是否与ev匹配
     if ((cr->expected_value != ev) && (cr->new_value != ev))
     {
