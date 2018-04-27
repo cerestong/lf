@@ -18,7 +18,7 @@ intptr_t *end_of_casrow = (intptr_t *)1;
 
 struct MCasHelper
 {
-    CasRow *cr; // 只有在cr->mch == this, MCasHelper与CasRow关联才有效
+    volatile CasRow *cr; // 只有在cr->mch == this, MCasHelper与CasRow关联才有效
 };
 
 // 每个工作线程持有一个threadCtx，相当于__thread 变量
@@ -85,6 +85,7 @@ static MCasHelper *allocate_mcas_helper(MCasThreadCtx *thd_ctx, LimboHandle *lim
     atomic_storeptr((void **)&(mch->cr), cr);
     //log("%p X %ld alloc mcas %p", thd_ctx, limbo_hdl->my_epoch_, mch);
     assert(mch->cr != nullptr);
+    memory_fence();
     return mch;
 }
 
@@ -207,6 +208,7 @@ void place_mcas_helper(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
         }
         else
         {
+            memory_fence();
             MCasHelper *cmch = (MCasHelper *)mcas_helper_unmask(cvalue);
             // address引用了MCasHelper,并且指向cr
             if (cr == cmch->cr)
@@ -290,7 +292,7 @@ void place_mcas_helper(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
 bool should_replace(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
                     intptr_t ev, MCasHelper *mch)
 {
-    CasRow *cr = mch->cr;
+    CasRow *cr = (CasRow *)(mch->cr);
     // 检查mch引用的cr的expectedValue和newValue值是否与ev匹配
     if ((cr->expected_value != ev) && (cr->new_value != ev))
     {
@@ -418,6 +420,7 @@ bool mcas(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
     }
     mcasp[desc.size()].address = end_of_casrow;
     CasRow *last_row = mcasp + desc.size() - 1;
+    memory_fence();
 
     bool ret = invoke_mcas(thd_ctx, limbo_hdl, mcasp, last_row);
 

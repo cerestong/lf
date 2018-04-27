@@ -58,7 +58,7 @@ void multi_thread_test(int thd_no)
     for (int i = 0; i < thd_no; i++)
     {
         ctx[i].i = i;
-        ctx[i].loop_cnt = 2e2;
+        ctx[i].loop_cnt = 2e7;
         ctx[i].ti = &((*lf::g_all_threads)[i]);
         ctx[i].mcas_ctx = lf::init_mcas_thread_ctx(i);
         ctx[i].thd = new std::thread(single_thread_test, ctx + i);
@@ -88,7 +88,7 @@ void multi_thread_test(int thd_no)
 
 int main(int argc, char **argv)
 {
-    int work_thread_no = 6;
+    int work_thread_no = 4;
     lf::Status sts = lf::init_lf_library(work_thread_no);
 
     lf::g_stdout_logger_on = true;
