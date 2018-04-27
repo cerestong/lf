@@ -74,4 +74,24 @@ static inline void atomic_storeptr(void *volatile *a, void *v)
     __atomic_store_n(a, v, __ATOMIC_SEQ_CST);
 }
 
+static inline void memory_fence()
+{
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+}
+
+static inline void acquire_fence()
+{
+    __atomic_thread_fence(__ATOMIC_ACQUIRE);
+}
+
+static inline void release_fence()
+{
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+}
+
+static inline void relax_fence()
+{
+    __atomic_thread_fence(__ATOMIC_RELAXED);
+}
+
 } // end namespace

@@ -61,7 +61,7 @@ void multi_thread_test(int thd_no)
     for (int i = 0; i < thd_no; i++)
     {
         ctx[i].i = i;
-        ctx[i].loop_cnt = 2e6;
+        ctx[i].loop_cnt = 2e7;
         ctx[i].ti = &((*lf::g_all_threads)[i]);
         ctx[i].mcas_ctx = lf::init_mcas_thread_ctx(i);
         ctx[i].thd = new std::thread(single_thread_test, ctx + i);
