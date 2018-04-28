@@ -44,10 +44,10 @@ ThreadInfo::ThreadInfo()
     : index_(0),
       handle_cnt_(0),
       empty_handle_(nullptr),
-      min_epoch_(0),
       group_head_(nullptr),
       group_tail_(nullptr)
 {
+    atomic_store_relaxed(&min_epoch_, 0);
     group_head_ = group_tail_ = new LimboGroup();
 }
 
@@ -56,13 +56,13 @@ ThreadInfo::~ThreadInfo()
     hard_free();
     assert(limbo_handle_.prev_ == limbo_handle_.next_);
     assert(limbo_handle_.prev_ = &limbo_handle_);
-    while(empty_handle_)
+    while (empty_handle_)
     {
         LimboHandle *next = empty_handle_->next_;
         delete empty_handle_;
         empty_handle_ = next;
     }
-    while(group_head_)
+    while (group_head_)
     {
         LimboGroup *next = group_head_->next_;
         delete group_head_;
@@ -85,19 +85,19 @@ LimboHandle *ThreadInfo::new_handle()
         handle_cnt_++;
     }
     handle->ti_ = this;
-    handle->my_epoch_ = atomic_add64(&global_epoch, 1) + 1;
+    handle->my_epoch_ = atomic_add64_relaxed(&global_epoch, 1) + 1;
     //handle->my_epoch_ = __atomic_fetch_add(&global_epoch, 1, __ATOMIC_ACQ_REL);
     //handle->my_epoch_ = ++global_epoch;
 
     link(limbo_handle_.prev_, handle, &limbo_handle_);
-    min_epoch_ = limbo_handle_.next_->my_epoch_;
+    atomic_store_relaxed(&min_epoch_, limbo_handle_.next_->my_epoch_);
 
     return handle;
 }
 
 void ThreadInfo::delete_handle(LimboHandle *handle)
 {
-    Epoch epoch = min_epoch_;
+    Epoch epoch = limbo_handle_.next_->my_epoch_;
     assert(handle != &limbo_handle_);
     handle->prev_->next_ = handle->next_;
     handle->next_->prev_ = handle->prev_;
@@ -105,9 +105,10 @@ void ThreadInfo::delete_handle(LimboHandle *handle)
     handle->prev_ = nullptr;
     handle->next_ = empty_handle_;
     empty_handle_ = handle;
-    min_epoch_ = limbo_handle_.next_->my_epoch_;
-    if (epoch != min_epoch_)
+    compiler_barrier();
+    if (epoch != limbo_handle_.next_->my_epoch_)
     {
+        atomic_store_relaxed(&min_epoch_, limbo_handle_.next_->my_epoch_);
         hard_free();
     }
 }

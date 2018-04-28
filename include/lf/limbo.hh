@@ -131,6 +131,7 @@ public:
   void *alloc(size_t size)
   {
     return calloc(1, size);
+    //return malloc(size);
   }
   void dealloc(void *p);
 
@@ -150,9 +151,10 @@ inline Epoch min_active_epoch()
   for (size_t i = 0; i < g_all_threads->size(); i++)
   {
     ThreadInfo &ti = (*g_all_threads)[i];
-    if (ti.min_epoch_ && (ti.min_epoch_ < ae))
+    Epoch ti_min_epoch = atomic_load_relaxed(&(ti.min_epoch_));
+    if (ti_min_epoch && (ti_min_epoch < ae))
     {
-      ae = ti.min_epoch_;
+      ae = ti_min_epoch;
     }
   }
   return ae;

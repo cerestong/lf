@@ -18,22 +18,102 @@ static const bool lfLittleEndian = PLATFORM_IS_LITTLE_ENDIAN;
 
 #define likely(x) __builtin_expect(!!(x), 1)
 #define unlikely(x) __builtin_expect(!!(x), 0)
-#define LIKELY(x)   (__builtin_expect(!!(x), 1))
+#define LIKELY(x) (__builtin_expect(!!(x), 1))
 #define UNLIKELY(x) (__builtin_expect(!!(x), 0))
+
+static inline void compiler_barrier()
+{
+    asm volatile("" ::: "memory");
+}
 
 static inline int64_t atomic_load(int64_t volatile *a)
 {
-    return __atomic_load_n (a, __ATOMIC_SEQ_CST);
+    return __atomic_load_n(a, __ATOMIC_SEQ_CST);
+}
+
+static inline int64_t atomic_load_relaxed(int64_t volatile *a)
+{
+    return __atomic_load_n(a, __ATOMIC_RELAXED);
+}
+
+static inline int64_t atomic_load_acquire(int64_t volatile *a)
+{
+    return __atomic_load_n(a, __ATOMIC_ACQUIRE);
 }
 
 static inline uint64_t atomic_load(uint64_t volatile *a)
 {
-    return __atomic_load_n (a, __ATOMIC_SEQ_CST);
+    return __atomic_load_n(a, __ATOMIC_SEQ_CST);
 }
 
-static inline void * atomic_loadptr(void *volatile *a)
+static inline uint64_t atomic_load_relaxed(uint64_t volatile *a)
 {
-    return __atomic_load_n (a, __ATOMIC_SEQ_CST);
+    return __atomic_load_n(a, __ATOMIC_RELAXED);
+}
+
+static inline int64_t atomic_load_acquire(uint64_t volatile *a)
+{
+    return __atomic_load_n(a, __ATOMIC_ACQUIRE);
+}
+
+static inline void *atomic_loadptr(void *volatile *a)
+{
+    return __atomic_load_n(a, __ATOMIC_SEQ_CST);
+}
+
+static inline void *atomic_loadptr_relaxed(void *volatile *a)
+{
+    return __atomic_load_n(a, __ATOMIC_RELAXED);
+}
+
+static inline void *atomic_load_acquire(void *volatile *a)
+{
+    return __atomic_load_n(a, __ATOMIC_ACQUIRE);
+}
+
+static inline void atomic_store(int64_t volatile *a, int64_t v)
+{
+    return __atomic_store_n(a, v, __ATOMIC_SEQ_CST);
+}
+
+static inline void atomic_store_relaxed(int64_t volatile *a, int64_t v)
+{
+    return __atomic_store_n(a, v, __ATOMIC_RELAXED);
+}
+
+static inline void atomic_store_release(int64_t volatile *a, int64_t v)
+{
+    return __atomic_store_n(a, v, __ATOMIC_RELEASE);
+}
+
+static inline void atomic_store(uint64_t volatile *a, uint64_t v)
+{
+    return __atomic_store_n(a, v, __ATOMIC_SEQ_CST);
+}
+
+static inline void atomic_store_relaxed(uint64_t volatile *a, uint64_t v)
+{
+    return __atomic_store_n(a, v, __ATOMIC_RELAXED);
+}
+
+static inline void atomic_store_release(uint64_t volatile *a, uint64_t v)
+{
+    return __atomic_store_n(a, v, __ATOMIC_RELEASE);
+}
+
+static inline void atomic_storeptr(void *volatile *a, void *v)
+{
+    __atomic_store_n(a, v, __ATOMIC_SEQ_CST);
+}
+
+static inline void atomic_storeptr_relaxed(void *volatile *a, void *v)
+{
+    __atomic_store_n(a, v, __ATOMIC_RELAXED);
+}
+
+static inline void atomic_storeptr_release(void *volatile *a, void *v)
+{
+    __atomic_store_n(a, v, __ATOMIC_RELEASE);
 }
 
 static inline int atomic_cas32(int32_t volatile *a, int32_t *cmp, int32_t set)
@@ -59,9 +139,19 @@ static inline int32_t atomic_add32(int32_t volatile *a, int32_t v)
     return __atomic_fetch_add(a, v, __ATOMIC_SEQ_CST);
 }
 
+static inline int32_t atomic_add32_relaxed(int32_t volatile *a, int32_t v)
+{
+    return __atomic_fetch_add(a, v, __ATOMIC_RELAXED);
+}
+
 static inline int64_t atomic_add64(int64_t volatile *a, int64_t v)
 {
     return __atomic_fetch_add(a, v, __ATOMIC_SEQ_CST);
+}
+
+static inline int64_t atomic_add64_relaxed(int64_t volatile *a, int64_t v)
+{
+    return __atomic_fetch_add(a, v, __ATOMIC_RELAXED);
 }
 
 static inline uint64_t atomic_add64(uint64_t volatile *a, uint64_t v)
@@ -69,9 +159,9 @@ static inline uint64_t atomic_add64(uint64_t volatile *a, uint64_t v)
     return __atomic_fetch_add(a, v, __ATOMIC_SEQ_CST);
 }
 
-static inline void atomic_storeptr(void *volatile *a, void *v)
+static inline uint64_t atomic_add64_relaxed(uint64_t volatile *a, uint64_t v)
 {
-    __atomic_store_n(a, v, __ATOMIC_SEQ_CST);
+    return __atomic_fetch_add(a, v, __ATOMIC_RELAXED);
 }
 
 static inline void memory_fence()

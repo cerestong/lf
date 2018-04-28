@@ -336,7 +336,10 @@ void place_mcas_helper(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
 bool should_replace(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
                     intptr_t ev, MCasHelper *mch)
 {
+    memory_fence();
     CasRow *cr = (CasRow *)(mch->cr);
+    assert(cr != nullptr);
+
     // 检查mch引用的cr的expectedValue和newValue值是否与ev匹配
     if ((cr->expected_value != ev) && (cr->new_value != ev))
     {
@@ -461,9 +464,10 @@ bool mcas(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
     CasRow *mcasp = (CasRow *)limbo_hdl->alloc(sizeof(CasRow) * (desc.size() + 1));
     for (size_t i = 0; i < desc.size(); i++)
     {
-        mcasp[i] = desc[i];
+        new (mcasp + i) CasRow(desc[i].address, desc[i].expected_value, desc[i].new_value);
+        assert(mcasp[i].address);
     }
-    mcasp[desc.size()].address = end_of_casrow;
+    new (mcasp + desc.size()) CasRow(end_of_casrow, 0, 0);
     CasRow *last_row = mcasp + desc.size() - 1;
     memory_fence();
 
@@ -485,6 +489,7 @@ intptr_t mcas_read(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
     else
     {
         MCasHelper *mch = (MCasHelper *)mcas_helper_unmask(cvalue);
+        memory_fence();
         CasRow *cr = (CasRow *)atomic_loadptr((void **)&(mch->cr));
         int res = help_complete(thd_ctx, limbo_hdl, cr);
         if ((res == 0) && (mch->cr->mch == mch))
