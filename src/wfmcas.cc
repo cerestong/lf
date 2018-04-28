@@ -83,10 +83,7 @@ static MCasHelper *allocate_mcas_helper(MCasThreadCtx *thd_ctx, LimboHandle *lim
 {
     MCasHelper *mch = (MCasHelper *)limbo_hdl->alloc(sizeof(MCasHelper));
     mch->cr = cr;
-    //atomic_storeptr((void **)&(mch->cr), cr);
-    log("%p X %ld alloc mcas %p", thd_ctx, limbo_hdl->my_epoch_, mch);
     assert(mch->cr != nullptr);
-    //memory_fence();
     return mch;
 }
 
@@ -169,24 +166,11 @@ void place_mcas_helper(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
         }
         if (!is_mcas_helper(cvalue))
         {
-            //>>> test only
-            if (Random::get_tls_instance()->one_in(5))
-            {
-                std::this_thread::yield();
-            }
-            //<<< test only
             // address里是值
             // 设置address为MCasHelper
             intptr_t ev = evalue;
             if (atomic_cas64(address, &ev, mcas_helper_mask((intptr_t)mch)))
             {
-                //>>> test only
-                if (Random::get_tls_instance()->one_in(10))
-                {
-                    std::this_thread::yield();
-                }
-                //<<< test only
-
                 // address值等于excepectValue,尝试设置cr->mch为mch
                 MCasHelper *emch = nullptr;
                 if ((!atomic_casptr((void **)(&cr->mch), (void **)(&emch), mch)) && (emch != mch))
@@ -198,16 +182,12 @@ void place_mcas_helper(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
                     ev = mcas_helper_mask((intptr_t)mch);
                     if (atomic_cas64(address, &ev, evalue))
                     {
-                        log("%p dealloc %p from 1.1.1", thd_ctx, mch);
                         limbo_hdl->dealloc(mch);
                     }
-                    log("%p path1.1.1 mch %p, emch %p", thd_ctx, mch, emch);
                 }
                 else
                 {
-                    log("%p path1.1.2 mch %p, emch %p", thd_ctx, mch, emch);
                 }
-                log("%p path1.1 mch %p, emch %ld return", thd_ctx, mch, ev);
                 return;
             }
             else if (is_mcas_helper(ev))
@@ -216,26 +196,18 @@ void place_mcas_helper(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
                 // 因为此时address里可能存储的是MCasHelper，因此值还未确定
                 // 这里存在一个无限循环？？？， 每次循环都address里都是value，并且value不等于eValue.
                 cvalue = ev;
-                log("%p path1.2 mch %p, emch %p contine", thd_ctx, mch, (MCasHelper *)mcas_helper_unmask(cvalue));
                 continue;
             }
             else
             {
                 // address的值与eValue不相同
                 // 这是我自己加的？？？
-                log("%p path1.3 mch %p, cvalue %ld return", thd_ctx, mch, ev);
             }
         }
         else
         {
             acquire_fence();
             MCasHelper *cmch = (MCasHelper *)mcas_helper_unmask(cvalue);
-            //>>> test only
-            if (Random::get_tls_instance()->one_in(5))
-            {
-                std::this_thread::yield();
-            }
-            //<<< test only
             // address引用了MCasHelper,并且指向cr
             if (cr == cmch->cr)
             {
@@ -258,14 +230,11 @@ void place_mcas_helper(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
                 }
                 else
                 {
-                    log("%p path2.1.2 mch %p, emch %p", thd_ctx, mch, emch);
                 }
                 if (likely(mch != emch))
                 {
-                    log("%p dealloc %p from 2.1", thd_ctx, mch);
                     limbo_hdl->dealloc(mch);
                 }
-                log("%p path2.1 mch %p, cmch %ld return", thd_ctx, mch, cmch);
                 return;
             }
             else if (should_replace(thd_ctx, limbo_hdl, evalue, cmch))
@@ -274,12 +243,6 @@ void place_mcas_helper(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
                 intptr_t ev = cvalue;
                 if (atomic_cas64(address, &ev, mcas_helper_mask((intptr_t)mch)))
                 {
-                    //>>> test only
-                    if (Random::get_tls_instance()->one_in(5))
-                    {
-                        std::this_thread::yield();
-                    }
-                    //<<< test only
                     MCasHelper *emch = nullptr;
                     if ((!atomic_casptr((void **)(&cr->mch), (void **)(&emch), mch)) && (emch != mch))
                     {
@@ -297,34 +260,28 @@ void place_mcas_helper(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
                     }
                     else
                     {
-                        log("%p path2.2.1.2 mch %p, emch %ld", thd_ctx, mch, emch);
                     }
-                    log("%p path2.2.1 mch %p, ev %ld return", thd_ctx, mch, ev);
                     return;
                 }
                 else
                 {
                     cvalue = ev;
-                    log("%p path2.2.2 mch %p, ev %ld continue", thd_ctx, mch, ev);
                     continue;
                 }
             }
             else
             {
                 // 数据不同，MCAS操作失败
-                log("%p path2.3 mch %p, return", thd_ctx, mch);
             }
         }
         // cr->mch == null 标识此操作失败
         // 设置cr->mch 和 lastRow->mch 为~0x0
         set_mcas_fail(cr, last_row);
-        log("%p path while mch %p, break", thd_ctx, mch);
         break;
     }
 
     if (likely(cr->mch != mch))
     {
-        log("%p dealloc %p from tail", thd_ctx, mch);
         limbo_hdl->dealloc(mch);
     }
     return;
@@ -392,7 +349,6 @@ int help_complete(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
 		线程自己的MCAS操作的依赖关系已经变化了。
 		线程应该回去处理自己的操作，增加failCount,尝试重新获取address
 		*/
-        //log("%p longjmp from help_complete, recur_depth %d", thd_ctx, thd_ctx->recur_depth);
         return -1;
     }
     // 获取lastRow位置,通过lastRow获知操作是否已经结束。
@@ -442,7 +398,6 @@ void remove_mcas_helper(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
         {
             atomic_cas64(m->address, &ev, m->expected_value);
         }
-        log("%p dealloc %p from remove", thd_ctx, mch);
         limbo_hdl->dealloc((void *)(mch));
     } while ((m++) != last_row);
 }
@@ -469,7 +424,6 @@ bool mcas(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
     }
     new (mcasp + desc.size()) CasRow(end_of_casrow, 0, 0);
     CasRow *last_row = mcasp + desc.size() - 1;
-    //memory_fence();
 
     bool ret = invoke_mcas(thd_ctx, limbo_hdl, mcasp, last_row);
 

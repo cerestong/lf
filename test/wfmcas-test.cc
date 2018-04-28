@@ -94,7 +94,7 @@ int main(int argc, char **argv)
     int work_thread_no = 6;
     lf::Status sts = lf::init_lf_library(work_thread_no);
 
-    lf::g_stdout_logger_on = false;
+    lf::g_stdout_logger_on = true;
     multi_thread_test(work_thread_no);
 
     lf::deinit_lf_library();
