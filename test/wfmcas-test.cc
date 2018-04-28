@@ -91,7 +91,7 @@ void multi_thread_test(int thd_no)
 
 int main(int argc, char **argv)
 {
-    int work_thread_no = 4;
+    int work_thread_no = 6;
     lf::Status sts = lf::init_lf_library(work_thread_no);
 
     lf::g_stdout_logger_on = false;

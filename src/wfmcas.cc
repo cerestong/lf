@@ -19,7 +19,7 @@ intptr_t *end_of_casrow = (intptr_t *)1;
 
 struct MCasHelper
 {
-    volatile CasRow *cr; // 只有在cr->mch == this, MCasHelper与CasRow关联才有效
+    CasRow *cr; // 只有在cr->mch == this, MCasHelper与CasRow关联才有效
 };
 
 // 每个工作线程持有一个threadCtx，相当于__thread 变量
@@ -82,11 +82,11 @@ static MCasHelper *allocate_mcas_helper(MCasThreadCtx *thd_ctx, LimboHandle *lim
                                         CasRow *cr)
 {
     MCasHelper *mch = (MCasHelper *)limbo_hdl->alloc(sizeof(MCasHelper));
-    //mch->cr = cr;
-    atomic_storeptr((void **)&(mch->cr), cr);
+    mch->cr = cr;
+    //atomic_storeptr((void **)&(mch->cr), cr);
     log("%p X %ld alloc mcas %p", thd_ctx, limbo_hdl->my_epoch_, mch);
     assert(mch->cr != nullptr);
-    memory_fence();
+    //memory_fence();
     return mch;
 }
 
@@ -117,7 +117,7 @@ bool invoke_mcas(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
         }
     } while ((mcasp++) != last_row);
 
-    gPendingOpTable[thd_ctx->thread_id] = nullptr;
+    atomic_storeptr_relaxed((void **)&(gPendingOpTable[thd_ctx->thread_id]), nullptr);
     // lastRow->mch == ~0x0, 标识操作失败
     res = ((intptr_t)(last_row->mch) != mch_fail_flag);
     // 将MCasHelper替换为真实值
@@ -146,7 +146,7 @@ void place_mcas_helper(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
     intptr_t evalue = cr->expected_value;
     MCasHelper *mch = nullptr;
     mch = allocate_mcas_helper(thd_ctx, limbo_hdl, cr);
-    intptr_t cvalue = *address;
+    intptr_t cvalue = atomic_load_relaxed(address);
     int tries = 0;
     while (cr->mch == nullptr)
     {
@@ -165,7 +165,7 @@ void place_mcas_helper(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
             // 在尝试maxFail次后，线程将自己的MCAS写到全局变量pendingOpTable[threadID]里
             // 其他线程保证最总会看到此操作，并会尝试帮助完成此操作。
             // CasRow和MCasHelper的关联，保证不会有多个线程去尝试完成同一个操作
-            gPendingOpTable[thd_ctx->thread_id] = cr;
+            atomic_storeptr_relaxed((void **)&(gPendingOpTable[thd_ctx->thread_id]), cr);
         }
         if (!is_mcas_helper(cvalue))
         {
@@ -228,7 +228,7 @@ void place_mcas_helper(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
         }
         else
         {
-            memory_fence();
+            acquire_fence();
             MCasHelper *cmch = (MCasHelper *)mcas_helper_unmask(cvalue);
             //>>> test only
             if (Random::get_tls_instance()->one_in(5))
@@ -336,7 +336,7 @@ void place_mcas_helper(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
 bool should_replace(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
                     intptr_t ev, MCasHelper *mch)
 {
-    memory_fence();
+    //memory_fence();
     CasRow *cr = (CasRow *)(mch->cr);
     assert(cr != nullptr);
 
@@ -349,7 +349,7 @@ bool should_replace(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
     {
         // 调用helpComplete,确保引用到的MCAS处于完成状态。
         int res = help_complete(thd_ctx, limbo_hdl, cr);
-        if ((res == 0) && (cr->mch == mch))
+        if ((res == 0) && ((MCasHelper *)atomic_loadptr_relaxed((void **)&(cr->mch)) == mch))
         {
             return (cr->new_value == ev);
         }
@@ -372,9 +372,10 @@ void help_if_needed(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl)
     thd_ctx->check_id = (thd_ctx->check_id + 1) % (gMCasThreadNo);
     if (thd_ctx->check_id == thd_ctx->thread_id)
         return;
-    CasRow *cr = gPendingOpTable[thd_ctx->check_id];
+    CasRow *cr = (CasRow *)atomic_loadptr_relaxed((void **)&(gPendingOpTable[thd_ctx->check_id]));
     if (cr != nullptr)
     {
+        acquire_fence();
         help_complete(thd_ctx, limbo_hdl, cr);
     }
 }
@@ -407,7 +408,7 @@ int help_complete(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
         if (last_row->mch == nullptr)
         {
             place_mcas_helper(thd_ctx, limbo_hdl, cr, last_row);
-            if ((intptr_t)cr->mch == mch_fail_flag)
+            if ((intptr_t)atomic_loadptr_relaxed((void **)&(cr->mch)) == mch_fail_flag)
             {
                 break;
             }
@@ -418,7 +419,7 @@ int help_complete(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
         }
     } while ((cr++) != last_row);
     thd_ctx->recur_depth--;
-    return ((intptr_t)last_row->mch != mch_fail_flag) ? 0 : 1;
+    return ((intptr_t)atomic_loadptr_relaxed((void **)&(last_row->mch)) != mch_fail_flag) ? 0 : 1;
 }
 
 void remove_mcas_helper(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
@@ -427,23 +428,22 @@ void remove_mcas_helper(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
     assert(m <= last_row);
     do
     {
-        if ((intptr_t)(m->mch) == mch_fail_flag)
+        MCasHelper *mch = (MCasHelper *)atomic_loadptr_relaxed((void **)&(m->mch));
+        intptr_t ev = mcas_helper_mask((intptr_t)(mch));
+        if ((intptr_t)mch == mch_fail_flag)
         {
             return;
         }
         else if (passed)
         {
-            intptr_t ev = mcas_helper_mask((intptr_t)(m->mch));
             atomic_cas64(m->address, &ev, m->new_value);
         }
         else
         {
-            intptr_t ev = mcas_helper_mask((intptr_t)(m->mch));
             atomic_cas64(m->address, &ev, m->expected_value);
         }
-        //log("%p X %ld passed %d remove_mcas_helper dealloc %p", thd_ctx, limbo_hdl->my_epoch_, passed, (void *)m->mch);
-        log("%p dealloc %p from remove", thd_ctx, m->mch);
-        limbo_hdl->dealloc((void *)(m->mch));
+        log("%p dealloc %p from remove", thd_ctx, mch);
+        limbo_hdl->dealloc((void *)(mch));
     } while ((m++) != last_row);
 }
 
@@ -469,7 +469,7 @@ bool mcas(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
     }
     new (mcasp + desc.size()) CasRow(end_of_casrow, 0, 0);
     CasRow *last_row = mcasp + desc.size() - 1;
-    memory_fence();
+    //memory_fence();
 
     bool ret = invoke_mcas(thd_ctx, limbo_hdl, mcasp, last_row);
 
@@ -481,18 +481,18 @@ intptr_t mcas_read(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
                    intptr_t *address)
 {
     assert(thd_ctx->recur_depth == 0);
-    intptr_t cvalue = *address;
+    intptr_t cvalue = atomic_load_relaxed(address);
     if (!is_mcas_helper(cvalue))
     {
         return cvalue;
     }
     else
     {
+        acquire_fence();
         MCasHelper *mch = (MCasHelper *)mcas_helper_unmask(cvalue);
-        memory_fence();
-        CasRow *cr = (CasRow *)atomic_loadptr((void **)&(mch->cr));
+        CasRow *cr = mch->cr;
         int res = help_complete(thd_ctx, limbo_hdl, cr);
-        if ((res == 0) && (mch->cr->mch == mch))
+        if ((res == 0) && ((MCasHelper *)atomic_loadptr_relaxed((void **)&(cr->mch)) == mch))
         {
             return mch->cr->new_value;
         }
