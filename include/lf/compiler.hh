@@ -26,6 +26,21 @@ static inline void compiler_barrier()
     asm volatile("" ::: "memory");
 }
 
+static inline int32_t atomic_load(int32_t volatile *a)
+{
+    return __atomic_load_n(a, __ATOMIC_SEQ_CST);
+}
+
+static inline int32_t atomic_load_relaxed(int32_t volatile *a)
+{
+    return __atomic_load_n(a, __ATOMIC_RELAXED);
+}
+
+static inline int32_t atomic_load_acquire(int32_t volatile *a)
+{
+    return __atomic_load_n(a, __ATOMIC_ACQUIRE);
+}
+
 static inline int64_t atomic_load(int64_t volatile *a)
 {
     return __atomic_load_n(a, __ATOMIC_SEQ_CST);
@@ -37,6 +52,21 @@ static inline int64_t atomic_load_relaxed(int64_t volatile *a)
 }
 
 static inline int64_t atomic_load_acquire(int64_t volatile *a)
+{
+    return __atomic_load_n(a, __ATOMIC_ACQUIRE);
+}
+
+static inline uint32_t atomic_load(uint32_t volatile *a)
+{
+    return __atomic_load_n(a, __ATOMIC_SEQ_CST);
+}
+
+static inline uint32_t atomic_load_relaxed(uint32_t volatile *a)
+{
+    return __atomic_load_n(a, __ATOMIC_RELAXED);
+}
+
+static inline uint32_t atomic_load_acquire(uint32_t volatile *a)
 {
     return __atomic_load_n(a, __ATOMIC_ACQUIRE);
 }
@@ -97,6 +127,36 @@ static inline void atomic_store_relaxed(uint64_t volatile *a, uint64_t v)
 }
 
 static inline void atomic_store_release(uint64_t volatile *a, uint64_t v)
+{
+    return __atomic_store_n(a, v, __ATOMIC_RELEASE);
+}
+
+static inline void atomic_store(int32_t volatile *a, int32_t v)
+{
+    return __atomic_store_n(a, v, __ATOMIC_SEQ_CST);
+}
+
+static inline void atomic_store_relaxed(int32_t volatile *a, int32_t v)
+{
+    return __atomic_store_n(a, v, __ATOMIC_RELAXED);
+}
+
+static inline void atomic_store_release(int32_t volatile *a, int32_t v)
+{
+    return __atomic_store_n(a, v, __ATOMIC_RELEASE);
+}
+
+static inline void atomic_store(uint32_t volatile *a, uint32_t v)
+{
+    return __atomic_store_n(a, v, __ATOMIC_SEQ_CST);
+}
+
+static inline void atomic_store_relaxed(uint32_t volatile *a, uint32_t v)
+{
+    return __atomic_store_n(a, v, __ATOMIC_RELAXED);
+}
+
+static inline void atomic_store_release(uint32_t volatile *a, uint32_t v)
 {
     return __atomic_store_n(a, v, __ATOMIC_RELEASE);
 }

@@ -131,9 +131,17 @@ public:
   void *alloc(size_t size)
   {
     return calloc(1, size);
-    //return malloc(size);
   }
   void dealloc(void *p);
+  
+  static void* direct_alloc(size_t size)
+  {
+    return calloc(1, size);
+  }
+  static void direct_free(void *p)
+  {
+    if (p) free(p);
+  }
 
 private:
   void link(LimboHandle *prev, LimboHandle *cur, LimboHandle *next);
