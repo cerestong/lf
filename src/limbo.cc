@@ -13,21 +13,22 @@ inline uint32_t LimboGroup::clean_until(ThreadInfo &ti, Epoch epoch_bound, uint3
     Epoch epoch = 0;
     while (head_ != tail_)
     {
-        if (is_epoch(e_[head_]))
+        if (e_[head_].ptr_)
         {
-            epoch = clear_mask(e_[head_]);
-            if (epoch_bound < epoch)
+            ti.free_rcu(e_[head_].ptr_, e_[head_].u_.tag);
+            --count;
+            if (!count)
             {
+                e_[head_].ptr_ = nullptr;
+                e_[head_].u_.epoch = epoch;
                 break;
             }
         }
         else
         {
-            free((void *)(e_[head_]));
-            --count;
-            if (!count)
+            epoch = e_[head_].u_.epoch;
+            if (epoch_bound < epoch)
             {
-                e_[head_] = set_mask(epoch);
                 break;
             }
         }
@@ -49,6 +50,7 @@ ThreadInfo::ThreadInfo()
 {
     atomic_store_relaxed(&min_epoch_, 0);
     group_head_ = group_tail_ = new LimboGroup();
+    memset(pool_, 0x00, sizeof(pool_));
 }
 
 ThreadInfo::~ThreadInfo()
@@ -86,17 +88,19 @@ LimboHandle *ThreadInfo::new_handle()
     }
     handle->ti_ = this;
     handle->my_epoch_ = atomic_add64_relaxed(&global_epoch, 1) + 1;
-    //handle->my_epoch_ = __atomic_fetch_add(&global_epoch, 1, __ATOMIC_ACQ_REL);
-    //handle->my_epoch_ = ++global_epoch;
 
     link(limbo_handle_.prev_, handle, &limbo_handle_);
-    atomic_store_relaxed(&min_epoch_, limbo_handle_.next_->my_epoch_);
+    if (limbo_handle_.next_ == handle)
+    {
+        atomic_store_relaxed(&min_epoch_, handle->my_epoch_);
+    }
 
     return handle;
 }
 
 void ThreadInfo::delete_handle(LimboHandle *handle)
 {
+    handle->~LimboHandle();
     Epoch epoch = limbo_handle_.next_->my_epoch_;
     assert(handle != &limbo_handle_);
     handle->prev_->next_ = handle->next_;
@@ -160,21 +164,6 @@ void ThreadInfo::hard_free()
     return;
 }
 
-void ThreadInfo::dealloc(void *p)
-{
-    if (!p)
-        return;
-    if (group_tail_->tail_ + 2 > group_tail_->capacity)
-    {
-        refill_group();
-    }
-    Epoch epoch = atomic_load(&global_epoch);
-    //Epoch epoch = __atomic_load_n (&global_epoch, __ATOMIC_ACQUIRE);
-    //Epoch epoch = global_epoch;
-
-    group_tail_->push_back(p, epoch);
-}
-
 void ThreadInfo::refill_group()
 {
     if (!group_tail_->next_)
@@ -183,16 +172,6 @@ void ThreadInfo::refill_group()
     }
     group_tail_ = group_tail_->next_;
     assert(group_tail_->head_ == 0 && group_tail_->tail_ == 0);
-}
-
-void *LimboHandle::alloc(size_t size)
-{
-    return ti_->alloc(size);
-}
-
-void LimboHandle::dealloc(void *p)
-{
-    ti_->dealloc(p);
 }
 
 } // end namespace

@@ -34,51 +34,57 @@ extern volatile Epoch global_epoch; // global epoch, updated regularly
 class ThreadInfo;
 class LimboHandle;
 
+enum MemTag : uint16_t {
+  MemTagNone = 0x0000,
+  MemTagPoolMask = 0xFF,
+  MemTagRcuCallback = ((uint16_t)-1)
+};
+
 struct LimboGroup
 {
+  struct Element 
+  {
+    void *ptr_;
+    union {
+      MemTag tag;
+      Epoch epoch;
+    } u_;
+  };
+
   enum
   {
-    capacity = (4076 - sizeof(int32_t) * 2 - sizeof(Epoch) - sizeof(LimboGroup *)) / sizeof(uintptr_t)
+    capacity = (4076 - sizeof(uint32_t) * 2 - sizeof(Epoch) - sizeof(LimboGroup *)) / sizeof(Element)
   };
   uint32_t head_;
   uint32_t tail_;
   Epoch epoch_;
   LimboGroup *next_;
-  uintptr_t e_[capacity];
+  Element e_[capacity];
 
   LimboGroup()
       : head_(0), tail_(0), epoch_(0), next_(nullptr)
   {
   }
 
-  inline Epoch clear_mask(uintptr_t v) const
-  {
-    return (Epoch)(v & (((uintptr_t)1 << 63) - 1));
-  }
-  inline uintptr_t set_mask(Epoch e) const
-  {
-    return ((uintptr_t)e | ((uintptr_t)1 << 63));
-  }
-  inline bool is_epoch(uintptr_t v)
-  {
-    return (v >> 63);
-  }
-
   Epoch first_epoch() const
   {
     assert(head_ != tail_);
-    return clear_mask(e_[head_]);
+    return e_[head_].u_.epoch;
   }
 
-  void push_back(void *ptr, Epoch epoch)
+  void push_back(void *ptr, Epoch epoch, MemTag tag)
   {
     assert(tail_ + 2 <= capacity);
     if (head_ == tail_ || epoch_ != epoch)
     {
-      e_[tail_++] = set_mask(epoch);
+      e_[tail_].ptr_ = nullptr;
+      e_[tail_].u_.epoch = epoch;
       epoch_ = epoch;
+      ++tail_;
     }
-    e_[tail_++] = (uintptr_t)ptr;
+    e_[tail_].ptr_ = ptr;
+    e_[tail_].u_.tag = tag;
+    ++tail_;
   }
 
   inline uint32_t clean_until(ThreadInfo &ti, Epoch epoch_bound, uint32_t count);
@@ -87,26 +93,36 @@ struct LimboGroup
 class LimboHandle
 {
 public:
+  enum { dealloc_cache_size = 5 };
   LimboHandle *prev_;
   LimboHandle *next_;
   ThreadInfo *ti_;
   Epoch my_epoch_;
+  void *ptrbuf_[dealloc_cache_size];
+  MemTag ptrtags_[dealloc_cache_size];
+  int ptrbuf_size_;
 
 public:
   LimboHandle()
       : prev_(this),
         next_(this),
         ti_(nullptr),
-        my_epoch_(0)
+        my_epoch_(0),
+        ptrbuf_size_(0)
   {
   }
 
-  ~LimboHandle()
-  {}
+  inline ~LimboHandle();
 
-  void *alloc(size_t size);
+  inline void *alloc(size_t size, MemTag tag = MemTagNone);
 
-  void dealloc(void *p);
+  inline void dealloc(void *p, MemTag tag = MemTagNone);
+};
+
+struct MrcuCallback
+{
+  virtual ~MrcuCallback(){}
+  virtual void operator()(ThreadInfo *ti) = 0;
 };
 
 class ThreadInfo
@@ -121,6 +137,9 @@ public:
   LimboGroup *group_head_;
   LimboGroup *group_tail_;
 
+  enum { pool_max_nlines = 20 };
+  void *pool_[pool_max_nlines];
+
 public:
   ThreadInfo();
   ~ThreadInfo();
@@ -128,18 +147,37 @@ public:
   LimboHandle *new_handle();
   void delete_handle(LimboHandle *handle);
 
-  void *alloc(size_t size)
+  void *alloc(size_t size, MemTag tag = MemTagNone)
   {
+    (void)tag;
     return calloc(1, size);
   }
-  void dealloc(void *p);
-  
-  static void* direct_alloc(size_t size)
+  void dealloc(void *p, MemTag tag = MemTagNone)
   {
+    record_rcu(p, tag);
+  }
+  void dealloc(void **pp, MemTag *ptag, int sz)
+  {
+    Epoch epoch = atomic_load_relaxed(&global_epoch);
+    for (int i = 0; i < sz; i++)
+    {
+      record_rcu(pp[i], epoch, ptag[i]);
+    }
+  }
+
+  void register_rcu(MrcuCallback *cb)
+  {
+    record_rcu(cb, MemTagRcuCallback);
+  }
+
+  static void* direct_alloc(size_t size, MemTag tag = MemTagNone)
+  {
+    (void)tag;
     return calloc(1, size);
   }
-  static void direct_free(void *p)
+  static void direct_free(void *p, MemTag tag = MemTagNone)
   {
+    (void) tag;
     if (p) free(p);
   }
 
@@ -147,6 +185,43 @@ private:
   void link(LimboHandle *prev, LimboHandle *cur, LimboHandle *next);
   void refill_group();
   void hard_free();
+
+  void free_rcu(void *p, MemTag tag)
+  {
+    if ((tag & MemTagPoolMask) == 0)
+    {
+      if (p) ::free(p);
+    }
+    else if (tag == MemTagRcuCallback)
+    {
+      (*static_cast<MrcuCallback*>(p))(this);
+    }
+    else 
+    {
+      int nl = tag & MemTagPoolMask;
+      *reinterpret_cast<void **>(p) = pool_[nl - 1];
+      pool_[nl - 1] = p;
+    }
+  }
+
+  void record_rcu(void *p, MemTag tag)
+  {
+    if (!p) return;
+    Epoch epoch = atomic_load_relaxed(&global_epoch);
+    record_rcu(p, epoch, tag);
+  }
+
+  void record_rcu(void *p, Epoch epoch, MemTag tag)
+  {
+    if (!p) return;
+    if (group_tail_->tail_ + 2 > group_tail_->capacity)
+    {
+      refill_group();
+    }
+    group_tail_->push_back(p, epoch, tag);
+  }
+
+  friend struct LimboGroup;
 };
 
 
@@ -168,4 +243,29 @@ inline Epoch min_active_epoch()
   return ae;
 }
 
+  inline LimboHandle::~LimboHandle()
+  {
+    if (ptrbuf_size_ != 0)
+    {
+      ti_->dealloc(ptrbuf_, ptrtags_, dealloc_cache_size);
+      ptrbuf_size_ = 0;      
+    }
+  }
+
+  inline void *LimboHandle::alloc(size_t size, MemTag tag)
+  {
+    return ti_->alloc(size, tag);
+  }
+
+  inline void LimboHandle::dealloc(void *p, MemTag tag)
+  {
+    ptrbuf_[ptrbuf_size_] = p;
+    ptrtags_[ptrbuf_size_] = tag;
+    ptrbuf_size_++;
+    if (ptrbuf_size_ == dealloc_cache_size)
+    {
+      ti_->dealloc(ptrbuf_, ptrtags_, dealloc_cache_size);
+      ptrbuf_size_ = 0;
+    }
+  }
 } // end namespace

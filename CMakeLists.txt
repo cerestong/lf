@@ -5,6 +5,9 @@ set (CMAKE_BUILD_TYPE Debug)
 
 set(SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
+# x86 unaligned access available
+add_definitions(-DHAVE_UNALIGNED_ACCESS)
+
 include_directories(
     ${SOURCE_DIR}/include
     ${SOURCE_DIR}/src
@@ -39,6 +42,7 @@ set(HEADER
 )
 
 set(SOURCE
+    src/compiler.cc
     src/alloc_pin.cc
     src/bit_util.cc
     src/dyn_array.cc
@@ -61,6 +65,7 @@ set(SOURCE
     src/posix_env_util.cc
     src/posix_logger.cc
     src/random.cc
+    src/masstree/mt_key.cc
 )
 
 add_executable(lf-test ${HEADER} ${SOURCE} main.cc)
@@ -82,3 +87,7 @@ target_link_libraries(test-odd pthread)
 add_executable(test-wfmcas ${HEADER} ${SOURCE} test/wfmcas-test.cc)
 target_compile_options( test-wfmcas PUBLIC -std=c++11 -w -Wall )
 target_link_libraries(test-wfmcas pthread)
+
+add_executable(test-unit-mt ${HEADER} ${SOURCE} test/unit-mt-test.cc)
+target_compile_options( test-unit-mt PUBLIC -std=c++11 -w -Wall )
+target_link_libraries(test-unit-mt pthread)

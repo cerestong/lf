@@ -21,10 +21,18 @@ static const bool lfLittleEndian = PLATFORM_IS_LITTLE_ENDIAN;
 #define LIKELY(x) (__builtin_expect(!!(x), 1))
 #define UNLIKELY(x) (__builtin_expect(!!(x), 0))
 
-static inline void compiler_barrier()
-{
-    asm volatile("" ::: "memory");
-}
+extern void fail_lf_invariant(const char *file, int line, const char *assertion, const char *message = 0) __attribute__((noreturn));
+
+#define lf_invariant(x, ...) do{ if (!(x)) fail_lf_invariant(__FILE__, __LINE__, #x, ##__VA_ARGS__); } while (0)
+
+extern void fail_lf_precondition(const char *file, int line, const char *assertion, const char *message = 0) __attribute__((noreturn));
+
+#define lf_precondition(x, ...)                                          \
+    do                                                                   \
+    {                                                                    \
+        if (!(x))                                                        \
+            fail_lf_precondition(__FILE__, __LINE__, #x, ##__VA_ARGS__); \
+    } while (0)
 
 static inline int32_t atomic_load(int32_t volatile *a)
 {
@@ -188,10 +196,28 @@ static inline int atomic_cas64(int64_t volatile *a, int64_t *cmp, int64_t set)
                                        __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
 }
 
+static inline int atomic_cas64(uint64_t volatile *a, uint64_t *cmp, uint64_t set)
+{
+    return __atomic_compare_exchange_n(a, cmp, set, 0,
+                                       __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+}
+
+static inline int atomic_cas64_relaxed(uint64_t volatile *a, uint64_t *cmp, uint64_t set)
+{
+    return __atomic_compare_exchange_n(a, cmp, set, 0,
+                                       __ATOMIC_RELAXED, __ATOMIC_RELAXED);
+}
+
 static inline int atomic_casptr(void *volatile *a, void **cmp, void *set)
 {
     return __atomic_compare_exchange_n(a, cmp, set, 0,
                                        __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+}
+
+static inline int atomic_casptr_relaxed(void *volatile *a, void **cmp, void *set)
+{
+    return __atomic_compare_exchange_n(a, cmp, set, 0,
+                                       __ATOMIC_RELAXED, __ATOMIC_RELAXED);
 }
 
 static inline int32_t atomic_add32(int32_t volatile *a, int32_t v)
@@ -244,4 +270,105 @@ static inline void relax_fence()
     __atomic_thread_fence(__ATOMIC_RELAXED);
 }
 
-} // end namespace
+/** @brief Compiler fence that relaxes the processor.
+
+    Use this in spinloops, for example. */
+inline void spin_hint()
+{
+    asm volatile("pause" ::: "memory"); // equivalent to "rep; nop"
+}
+
+static inline void compiler_barrier()
+{
+    asm volatile("" ::: "memory");
+}
+
+struct spin_hint_function
+{
+    void operator()() const
+    {
+        spin_hint();
+    }
+};
+
+// stolen from Linux
+inline uint64_t ntohq(uint64_t val)
+{
+#ifdef __i386__
+    union {
+        struct {
+            uint32_t a;
+            uint32_t b;
+        } s;
+        uint64_t u;
+    } v;
+    v.u = val;
+    asm("bswapl %0; bswapl %1; xchgl %0,%1"
+        : "+r" (v.s.a), "+r" (v.s.b));
+    return v.u;
+#else /* __i386__ */
+    asm("bswapq %0" : "+r" (val));
+    return val;
+#endif
+}
+
+inline uint64_t htonq(uint64_t val)
+{
+    return ntohq(val);
+}
+
+inline uint64_t net_to_host_order(uint64_t x)
+{
+    return ntohq(x);
+}
+
+inline uint64_t host_to_net_order(uint64_t x)
+{
+    return htonq(x);
+}
+
+inline int ctz(uint64_t x)
+{
+    return __builtin_ctzll(x);
+}
+
+inline int clz(long long x)
+{
+    return __builtin_clzll(x);
+}
+
+inline int clz(uint64_t x)
+{
+    return __builtin_clzll(x);
+}
+
+template <typename T, typename U>
+inline T iceil(T x, U y)
+{
+    U mod = x % y;
+    return x + (mod ? y - mod : 0);
+}
+
+/* Return the smallest power of 2 greater than or equal to x.
+    @pre x != 0
+    @pre the result is representable in type T
+*/
+template <typename T>
+inline T iceil_log2(T x)
+{
+    return T(1) << (sizeof(T) * 8 - clz(x) - !(x & (x - 1)));
+}
+
+struct do_nothing
+{
+    void operator()() const
+    {}
+    template <typename T>
+    void operator()(const T&) const
+    {}
+    template <typename T, typename U>
+    void operator()(const T&, const U&) const
+    {}
+};
+
+} // namespace lf
