@@ -152,6 +152,14 @@ class MtKey
         ikey0_ = StringSlice::make_comparable(s_, len_);
     }
 
+    void unshift()
+    {
+        lf_precondition(is_shifted());
+        s_ -= ikey_size;
+        ikey0_ = StringSlice::make_comparable(s_, ikey_size);
+        len_ = ikey_size + 1;
+    }
+
     /*
     @pre has_suffix()
     */
@@ -214,6 +222,47 @@ class MtKey
     Slice prefix_string() const
     {
         return Slice(first_, s_-first_);
+    }
+
+    void assign_store_ikey(uint64_t ikey)
+    {
+        ikey0_ = ikey;
+        *reinterpret_cast<uint64_t *>(const_cast<char*>(s_)) = host_to_net_order(ikey);
+    }
+
+    void assign_store_length(int len)
+    {
+        len_ = len;
+    }
+
+    int assign_store_suffix(Slice s)
+    {
+        memcpy(const_cast<char *>(s_ + ikey_size), s.data(), s.size());
+        return ikey_size + s.size();
+    }
+
+    void shift_clear()
+    {
+        ikey0_ = 0;
+        len_ = 0;
+        s_ += ikey_size;
+    }
+
+    void shift_clear_reverse()
+    {
+        ikey0_ = ~uint64_t(0);
+        len_ = ikey_size + 1;
+        s_ += ikey_size;
+    }
+
+    Slice full_string() const
+    {
+        return Slice(first_, s_ + len_ - first_);
+    }
+
+    operator Slice() const
+    {
+        return full_string();
     }
 
   private:
