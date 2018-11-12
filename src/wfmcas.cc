@@ -342,7 +342,7 @@ int help_complete(MCasThreadCtx *thd_ctx, LimboHandle *limbo_hdl,
                   CasRow *cr)
 {
     thd_ctx->recur_depth++;
-    if (thd_ctx->recur_depth >= gMCasThreadNo)
+    if (thd_ctx->recur_depth >= int(gMCasThreadNo))
     {
         /*
 		递归调用helpComplete的深度大于nThreads，意味着：

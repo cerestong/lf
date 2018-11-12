@@ -19,6 +19,11 @@ namespace lf {
     {
         if (g_all_threads)
         {
+            for (size_t i = 0; i < g_all_threads->size(); i++)
+            {
+                ThreadInfo &ti = (*g_all_threads)[i];
+                ti.destroy();
+            }
             delete g_all_threads;
             g_all_threads = nullptr;
         }

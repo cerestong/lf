@@ -19,8 +19,8 @@ class NodeBase : public NodeVersion
   public:
     static constexpr bool concurrent = true;
 
-    NodeBase(bool isleaf)
-        : NodeVersion(isleaf)
+    NodeBase(bool bisleaf)
+        : NodeVersion(bisleaf)
     {
     }
 
@@ -115,11 +115,11 @@ class InterNode : public NodeBase
     void print(FILE *f, const char *prefix, int depth, int kdepth) const;
 
   private:
-    void assign(int p, uint64_t ikey, NodeBase *child)
+    void assign(int p, uint64_t i_key, NodeBase *child)
     {
         child->set_parent(this);
         child_[p + 1] = child;
-        ikey0_[p] = ikey;
+        ikey0_[p] = i_key;
     }
 
     void shift_from(int p, const InterNode *x, int xp, int n)
@@ -257,7 +257,7 @@ class Leaf : public NodeBase
     phantom_epoch_type phantom_epoch_[1];
     internal_ksuf_type iksuf_[0];
 
-    Leaf(size_t sz, phantom_epoch_type phantom_epoch)
+    Leaf(size_t sz, phantom_epoch_type p_phantom_epoch)
         : NodeBase(true),
           modstate_(modstate_insert),
           permutation_(Kpermuter::make_empty()),
@@ -267,7 +267,7 @@ class Leaf : public NodeBase
         extrasize64_ = (int(sz) >> 6) - ((int(sizeof(*this)) + 63) >> 6);
         if (extrasize64_ > 0)
             new ((void *)&iksuf_[0]) internal_ksuf_type(width, sz - sizeof(*this));
-        phantom_epoch_[0] = phantom_epoch;
+        phantom_epoch_[0] = p_phantom_epoch;
     }
 
     static Leaf *make(int ksufsize, phantom_epoch_type phantom_epoch, ThreadInfo *ti)
@@ -604,8 +604,8 @@ inline int Leaf::stable_last_key_compare(const MtKey &k, NodeVersion v) const
     Return the Leaf at or after *this responsible for ka.
     @pre *this was responsible for ka at version v.
 
-    检查 从版本v以来，*this 是否分割过。
-    若split过，则通过B^link-tree指针，定位与ka相关的Leaf节点，v对应那个Leaf节点的
+    检�?从版本v以来�?this 是否分割过�?
+    若split过，则通过B^link-tree指针，定位与ka相关的Leaf节点，v对应那个Leaf节点�?
     stable版本
 */
 inline Leaf *Leaf::advance_to_key(const MtKey &ka, NodeVersion &v) const
@@ -628,7 +628,7 @@ inline Leaf *Leaf::advance_to_key(const MtKey &ka, NodeVersion &v) const
     return const_cast<Leaf *>(n);
 }
 
-// 若key的长度非常大（>64K），会触发断言
+// 若key的长度非常大�?64K），会触发断言
 void Leaf::assign_ksuf(int p, Slice s, bool initializing, ThreadInfo *ti)
 {
     if ((ksuf_ && ksuf_->assign(p, s)) ||
@@ -696,8 +696,8 @@ inline NodeBase *BasicTable::fix_root()
     NodeBase *old_root = root_;
     if (unlikely(!old_root->is_root()))
     {
-        NodeBase *root = old_root->maybe_parent();
-        atomic_casptr((void **)&root_, (void **)&old_root, root);
+        NodeBase *new_root = old_root->maybe_parent();
+        atomic_casptr((void **)&root_, (void **)&old_root, new_root);
     }
     return old_root;
 }

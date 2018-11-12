@@ -34,10 +34,11 @@ extern volatile Epoch global_epoch; // global epoch, updated regularly
 class ThreadInfo;
 class LimboHandle;
 
-enum MemTag : uint16_t {
+enum MemTag : uint16_t
+{
   MemTagNone = 0x0000,
-  MemTagPoolMask = 0xFF,
-  MemTagRcuCallback = ((uint16_t)-1)
+  MemTagPoolMask = 0x00FF,
+  MemTagRcuCallback = 0xFFFF
 };
 
 struct LimboGroup
@@ -92,8 +93,11 @@ struct LimboGroup
 
 class LimboHandle
 {
-public:
-  enum { dealloc_cache_size = 5 };
+private:
+  enum
+  {
+    dealloc_cache_size = 5
+  };
   LimboHandle *prev_;
   LimboHandle *next_;
   ThreadInfo *ti_;
@@ -102,7 +106,6 @@ public:
   MemTag ptrtags_[dealloc_cache_size];
   int ptrbuf_size_;
 
-public:
   LimboHandle()
       : prev_(this),
         next_(this),
@@ -114,9 +117,13 @@ public:
 
   inline ~LimboHandle();
 
+public:
+
   inline void *alloc(size_t size, MemTag tag = MemTagNone);
 
   inline void dealloc(void *p, MemTag tag = MemTagNone);
+
+  friend class ThreadInfo;
 };
 
 struct MrcuCallback
@@ -125,24 +132,36 @@ struct MrcuCallback
   virtual void operator()(ThreadInfo *ti) = 0;
 };
 
+
+/*
+要保证内存安全，上下文中必须持有合适的LimboHandle
+整个机制依赖LimboHandle的时间戳
+*/
 class ThreadInfo
 {
-public:
+private:
   int32_t index_;
   int32_t handle_cnt_;
   LimboHandle limbo_handle_;  // handle list
   LimboHandle *empty_handle_; // empty handle list
-  volatile Epoch min_epoch_;
-
   LimboGroup *group_head_;
   LimboGroup *group_tail_;
+  Epoch max_epoch_;
 
-  enum { pool_max_nlines = 20 };
+  enum
+  {
+    pool_max_nlines = 20
+  };
   void *pool_[pool_max_nlines];
 
 public:
+  volatile Epoch min_epoch_;
+
   ThreadInfo();
   ~ThreadInfo();
+
+  // 用户需要确保此时没有活跃的LimboHandle
+  void destroy();
 
   LimboHandle *new_handle();
   void delete_handle(LimboHandle *handle);
@@ -170,6 +189,10 @@ public:
     record_rcu(cb, MemTagRcuCallback);
   }
 
+  // 谨慎使用hard_free,因为它跳过了LimboHandle的时间戳保护
+  // 只在 handle析构 和 ThreadInfo析构时会触发
+  void hard_free();
+
   static void* direct_alloc(size_t size, MemTag tag = MemTagNone)
   {
     (void)tag;
@@ -178,19 +201,20 @@ public:
   static void direct_free(void *p, MemTag tag = MemTagNone)
   {
     (void) tag;
-    if (p) free(p);
+    if (p)
+      free(p);
   }
 
 private:
   void link(LimboHandle *prev, LimboHandle *cur, LimboHandle *next);
   void refill_group();
-  void hard_free();
 
   void free_rcu(void *p, MemTag tag)
   {
     if ((tag & MemTagPoolMask) == 0)
     {
-      if (p) ::free(p);
+      if (p)
+        ::free(p);
     }
     else if (tag == MemTagRcuCallback)
     {
@@ -206,14 +230,16 @@ private:
 
   void record_rcu(void *p, MemTag tag)
   {
-    if (!p) return;
+    if (!p)
+      return;
     Epoch epoch = atomic_load_relaxed(&global_epoch);
     record_rcu(p, epoch, tag);
   }
 
   void record_rcu(void *p, Epoch epoch, MemTag tag)
   {
-    if (!p) return;
+    if (!p)
+      return;
     if (group_tail_->tail_ + 2 > group_tail_->capacity)
     {
       refill_group();
@@ -223,7 +249,6 @@ private:
 
   friend struct LimboGroup;
 };
-
 
 extern std::vector<ThreadInfo> *g_all_threads;
 
@@ -247,7 +272,7 @@ inline Epoch min_active_epoch()
   {
     if (ptrbuf_size_ != 0)
     {
-      ti_->dealloc(ptrbuf_, ptrtags_, dealloc_cache_size);
+    ti_->dealloc(ptrbuf_, ptrtags_, ptrbuf_size_);
       ptrbuf_size_ = 0;      
     }
   }
@@ -268,4 +293,4 @@ inline Epoch min_active_epoch()
       ptrbuf_size_ = 0;
     }
   }
-} // end namespace
+} // namespace lf

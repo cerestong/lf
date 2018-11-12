@@ -24,9 +24,9 @@ class ValuePrint
 {
   public:
     static void print(T value, FILE *f, const char *prefix,
-                      int indent, Slice key, uint64_t initial_timestamp, char *suffix)
+                      int indent, Slice key, uint64_t init_timestamp, char *suffix)
     {
-        value->print(f, prefix, indent, key, initial_timestamp, suffix);
+        value->print(f, prefix, indent, key, init_timestamp, suffix);
     }
 };
 
@@ -37,7 +37,7 @@ class ValuePrint<unsigned char *>
     static void print(unsigned char *value, FILE *f, const char *prefix,
                       int indent, Slice key, uint64_t, char *suffix)
     {
-        fprintf(f, "%s%*s%.*s = %p%s\n", prefix, indent, "", key.size(), key.data(), value, suffix);
+        fprintf(f, "%s%*s%.*s = %p%s\n", prefix, indent, "", (int)(key.size()), key.data(), value, suffix);
     }
 };
 
@@ -49,7 +49,7 @@ class ValuePrint<uint64_t>
                       int indent, Slice key, uint64_t, char *suffix)
     {
         fprintf(f, "%s%*s%.*s = %" PRIu64 "%s\n",
-                prefix, indent, "", key.size(), key.data(), value, suffix);
+                prefix, indent, "", (int)(key.size()), key.data(), value, suffix);
     }
 };
 

@@ -155,10 +155,11 @@ int my_decimal2binary(uint32_t mask, const my_decimal *d, char *bin, int prec,
 int str2my_decimal(uint32_t mask, const char *from, size_t length,
                    my_decimal *decimal_value)
 {
-  char *end, *from_end;
+  char *end; /*, *from_end;*/
   int err;
 
-  from_end = end = (char *)from + length;
+  /*from_end =*/
+  end = (char *)from + length;
   err = string2decimal((char *)from, (decimal_t *)decimal_value, &end);
 #if 0
     if (end != from_end && !err) {

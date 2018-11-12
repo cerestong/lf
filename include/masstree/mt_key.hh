@@ -39,6 +39,34 @@ struct StringSlice
         return net_to_host_order(make(s, len));
     }
 
+    // 通过单个内存访问指令，获取s的前缀
+    // @pre 要求可以安全访问[s- size - 1, s + size)
+    static uint64_t make_sloppy(const char *s, int len)
+    {
+        if (len <= 0)
+        {
+            return 0;
+        }
+#if HAVE_UNALIGNED_ACCESS
+        if (len >= size)
+            return *reinterpret_cast<const uint64_t *>(s);
+#if __BYTE_ORDER == __LITTLE_ENDIAN
+        return *reinterpret_cast<const uint64_t *>(s - (size - len)) >> (8 * (size - len));
+#else
+        return *reinterpret_cast<const uint64_t *>(s) & (~uint64_t(0) << (8 * (size - len)));
+#endif
+#else
+        union_type u(0);
+        memcpy(u.s, s, std::min(len, size));
+        return u.x;
+#endif
+    }
+
+    static uint64_t make_comparable_sloppy(const char *s, int len)
+    {
+        return net_to_host_order(make_sloppy(s, len));
+    }
+
     static int unparse_comparable(char *buf, int buflen, uint64_t value, int len)
     {
         union_type u(host_to_net_order(value));
@@ -55,14 +83,11 @@ struct StringSlice
             uint64_t delta = *reinterpret_cast<const uint64_t *>(a) ^ *reinterpret_cast<const uint64_t *>(b);
             if (unlikely(len <= 0))
                 return true;
-            if (lfLittleEndian)
-            {
+#if __BYTE_ORDER == __LITTLE_ENDIAN
                 return (delta << (8 * (size - len))) == 0;
-            }
-            else
-            {
+#else
                 return (delta >> (8 * (size - len))) == 0;
-            }
+#endif
         }
 #endif
         return memcmp(a, b, len) == 0;
@@ -93,19 +118,19 @@ class MtKey
           len_(s.size()), s_(s.data()), first_(s_)
     {
     }
-    explicit MtKey(uint64_t ikey)
-        : ikey0_(ikey),
-          len_(ikey ? ikey_size - ctz(ikey) / 8 : 0),
+    explicit MtKey(uint64_t i_key)
+        : ikey0_(i_key),
+          len_(i_key ? ikey_size - ctz(i_key) / 8 : 0),
           s_(0), first_(0)
     {
     }
-    MtKey(uint64_t ikey, int len)
-        : ikey0_(ikey),
+    MtKey(uint64_t i_key, int len)
+        : ikey0_(i_key),
           len_(std::min(len, ikey_size)), s_(0), first_(0)
     {
     }
-    MtKey(uint64_t ikey, Slice suf)
-        : ikey0_(ikey),
+    MtKey(uint64_t i_key, Slice suf)
+        : ikey0_(i_key),
           len_(ikey_size + suf.size()),
           s_(suf.data() - ikey_size),
           first_(s_)
@@ -129,7 +154,7 @@ class MtKey
 
     bool has_suffix() const
     {
-        return len_ > StringSlice::size;
+        return len_ > ikey_size;
     }
 
     Slice suffix() const
@@ -149,14 +174,16 @@ class MtKey
     {
         s_ += ikey_size;
         len_ -= ikey_size;
-        ikey0_ = StringSlice::make_comparable(s_, len_);
+        ikey0_ = StringSlice::make_comparable_sloppy(s_, len_);
     }
 
+    // unshift 在scan函数中使用，scan_up时MtKey向后退8位
+    // ikey0_保持不变，len_置为ikey_size+1
     void unshift()
     {
         lf_precondition(is_shifted());
         s_ -= ikey_size;
-        ikey0_ = StringSlice::make_comparable(s_, ikey_size);
+        ikey0_ = StringSlice::make_comparable_sloppy(s_, ikey_size);
         len_ = ikey_size + 1;
     }
 
@@ -167,7 +194,7 @@ class MtKey
     {
         s_ += delta;
         len_ -= delta;
-        ikey0_ = StringSlice::make_comparable(s_, len_);
+        ikey0_ = StringSlice::make_comparable_sloppy(s_, len_);
     }
 
     bool is_shifted() const
@@ -175,6 +202,7 @@ class MtKey
         return first_ != s_;
     }
 
+    // Undo all previous shift() calls
     void unshift_all()
     {
         if (s_ != first_)
@@ -185,9 +213,27 @@ class MtKey
         }
     }
 
-    int compare(uint64_t ikey, int keylen) const
+    // shift_clear 在scan中使用， 遍历过程中scan_down时，
+    // 希望获取下一层中最小的MtKey: ikey0_ == 0 && len_ ==
+    void shift_clear()
     {
-        int cmp = StringSlice::compare(this->ikey(), ikey);
+        ikey0_ = 0;
+        len_ = 0;
+        s_ += ikey_size;
+    }
+
+    // shift_clear_reverse 在scan中反向遍历时使用，
+    // 希望获取下一层中最大的MtKey
+    void shift_clear_reverse()
+    {
+        ikey0_ = ~uint64_t(0);
+        len_ = ikey_size + 1;
+        s_ += ikey_size;
+    }
+
+    int compare(uint64_t i_key, int keylen) const
+    {
+        int cmp = StringSlice::compare(this->ikey(), i_key);
         if (cmp == 0)
         {
             if (len_ > ikey_size)
@@ -224,10 +270,10 @@ class MtKey
         return Slice(first_, s_-first_);
     }
 
-    void assign_store_ikey(uint64_t ikey)
+    void assign_store_ikey(uint64_t i_key)
     {
-        ikey0_ = ikey;
-        *reinterpret_cast<uint64_t *>(const_cast<char*>(s_)) = host_to_net_order(ikey);
+        ikey0_ = i_key;
+        *reinterpret_cast<uint64_t *>(const_cast<char *>(s_)) = host_to_net_order(i_key);
     }
 
     void assign_store_length(int len)
@@ -239,20 +285,6 @@ class MtKey
     {
         memcpy(const_cast<char *>(s_ + ikey_size), s.data(), s.size());
         return ikey_size + s.size();
-    }
-
-    void shift_clear()
-    {
-        ikey0_ = 0;
-        len_ = 0;
-        s_ += ikey_size;
-    }
-
-    void shift_clear_reverse()
-    {
-        ikey0_ = ~uint64_t(0);
-        len_ = ikey_size + 1;
-        s_ += ikey_size;
     }
 
     Slice full_string() const

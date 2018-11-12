@@ -36,6 +36,7 @@ void single_thread_test(Ctx *ctx)
         desc.push_back(lf::CasRow(g_array + 1, g2, e2));
 
         bool ret = lf::mcas(ctx->mcas_ctx, handle, desc);
+        (void)ret;
 
         ctx->ti->delete_handle(handle);
     }
@@ -91,7 +92,7 @@ void multi_thread_test(int thd_no)
 
 int main(int argc, char **argv)
 {
-    int work_thread_no = 6;
+    int work_thread_no = 4;
     lf::Status sts = lf::init_lf_library(work_thread_no);
 
     lf::g_stdout_logger_on = true;

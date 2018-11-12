@@ -37,12 +37,12 @@ class Stringbag
         return overhead(width) + len + slice_type::size - 1;
     }
 
-    Stringbag(int width, size_t capacity)
+    Stringbag(int width, size_t icapacity)
     {
         size_t firstpos = overhead(width);
-        assert(capacity >= firstpos && capacity <= max_size());
+        assert(icapacity >= firstpos && icapacity <= max_size());
         size_ = firstpos;
-        capacity_ = capacity - 1;
+        capacity_ = icapacity - 1;
         memset(info_, 0, sizeof(info_type) * width);
     }
 

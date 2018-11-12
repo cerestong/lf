@@ -46,7 +46,8 @@ ThreadInfo::ThreadInfo()
       handle_cnt_(0),
       empty_handle_(nullptr),
       group_head_(nullptr),
-      group_tail_(nullptr)
+      group_tail_(nullptr),
+      max_epoch_(0)
 {
     atomic_store_relaxed(&min_epoch_, 0);
     group_head_ = group_tail_ = new LimboGroup();
@@ -54,10 +55,17 @@ ThreadInfo::ThreadInfo()
 }
 
 ThreadInfo::~ThreadInfo()
+{}
+
+void ThreadInfo::destroy()
 {
-    hard_free();
+    // 用户需要确保此时没有活跃的LimboHandle
     assert(limbo_handle_.prev_ == limbo_handle_.next_);
     assert(limbo_handle_.prev_ = &limbo_handle_);
+    while (group_head_->head_ != group_head_->tail_)
+    {
+        hard_free();
+    }
     while (empty_handle_)
     {
         LimboHandle *next = empty_handle_->next_;
@@ -71,6 +79,16 @@ ThreadInfo::~ThreadInfo()
         group_head_ = next;
     }
     group_tail_ = nullptr;
+    for (int i = 0; i < pool_max_nlines; i++)
+    {
+        void *head = pool_[i];
+        while (head)
+        {
+            direct_free(head);
+            head = *reinterpret_cast<void **>(head);
+        }
+        pool_[i] = nullptr;
+    } 
 }
 
 LimboHandle *ThreadInfo::new_handle()
@@ -94,6 +112,7 @@ LimboHandle *ThreadInfo::new_handle()
     {
         atomic_store_relaxed(&min_epoch_, handle->my_epoch_);
     }
+    max_epoch_ = handle->my_epoch_;
 
     return handle;
 }
@@ -174,4 +193,4 @@ void ThreadInfo::refill_group()
     assert(group_tail_->head_ == 0 && group_tail_->tail_ == 0);
 }
 
-} // end namespace
+} // namespace lf

@@ -6,6 +6,14 @@
 namespace lf
 {
 
+/*
+遍历的一致性问题：
+t0 时刻的遍历，一定能观察到t0之前的变更，并可能观察到t0之后的变更
+对于两次校验过程: scan[t0], scan[t1] 并且 t0<t1， 且 t1 > 任意scan[t0]观察到变更的发生时刻 。
+若scan[t0]与scan[t1]完全相同，则scan[t0]的结果是t1时刻的快照。
+也就是t0和t1之间没有变更
+*/
+
 class ScanStackElt
 {
   public:
@@ -188,11 +196,11 @@ struct ReverseScanHelper
         while (true)
         {
             NodeVersion v = n->stable();
-            N *next = n->safe_next();
+            N *pnext = n->safe_next();
             int cmp;
-            if (!next || (cmp == StringSlice::compare(k.ikey(), next->ikey_bound())) < 0 || (cmp == 0 && k.length() == 0))
+            if (!pnext || (cmp == StringSlice::compare(k.ikey(), pnext->ikey_bound())) < 0 || (cmp == 0 && k.length() == 0))
                 return v;
-            n = next;
+            n = pnext;
         }
     }
 
@@ -290,7 +298,7 @@ retry:
 template <typename H>
 int ScanStackElt::find_next(H &helper, MtKey &ka, LeafValue &entry)
 {
-    int kp;
+    int ikp;
 
     if (v_.deleted())
     {
@@ -298,22 +306,23 @@ int ScanStackElt::find_next(H &helper, MtKey &ka, LeafValue &entry)
     }
 
 retry_entry:
-    kp = this->kp();
-    if (kp >= 0)
+    ikp = this->kp();
+    if (ikp >= 0)
     {
-        uint64_t ikey = n_->ikey0_[kp];
-        int keylenx = n_->keylenx_[kp];
+        uint64_t ikey = n_->ikey0_[ikp];
+        int keylenx = n_->keylenx_[ikp];
         int keylen = keylenx;
 
         compiler_barrier();
-        entry = n_->lv_[kp];
+        entry = n_->lv_[ikp];
         if (n_->keylenx_has_ksuf(keylenx))
         {
-            keylen = ka.assign_store_suffix(n_->ksuf(kp));
+            keylen = ka.assign_store_suffix(n_->ksuf(ikp));
         }
 
         if (n_->has_changed(v_))
         {
+            // 注意： 这里ka的后缀值可能已经变化
             goto changed;
         }
         else if (helper.is_duplicate(ka, ikey, keylenx))

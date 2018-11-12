@@ -28,9 +28,9 @@ class NodeVersion
 {
   public:
     NodeVersion() { v_ = 0; }
-    explicit NodeVersion(bool isleaf)
+    explicit NodeVersion(bool is_leaf)
     {
-        v_ = isleaf ? isleaf_bit : 0;
+        v_ = is_leaf ? isleaf_bit : 0;
     }
 
     bool isleaf() const

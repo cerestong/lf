@@ -11,8 +11,8 @@ class IdentityKpermuter
     int size_;
 
   public:
-    IdentityKpermuter(int size)
-        : size_(size) {}
+    IdentityKpermuter(int isize)
+        : size_(isize) {}
     int size() const
     {
         return size_;
@@ -103,13 +103,13 @@ class Kpermuter
     */
     int insert_from_back(int i)
     {
-        int value = back();
+        int ivalue = back();
         // increase size, leave lower slots unchanged
         x_ = ((x_ + 1) & (((value_type)16 << (i << 2)) - 1)) |
              // insert slot
-             ((value_type)value << ((i << 2) + 4)) |
+             ((value_type)ivalue << ((i << 2) + 4)) |
              ((x_ << 4) & ~(((value_type)256 << (i << 2)) - 1));
-        return value;
+        return ivalue;
     }
 
     /* Insert an unallocated element from position si at posiotion di
@@ -119,10 +119,10 @@ class Kpermuter
     */
     void insert_selected(int di, int si)
     {
-        int value = (*this)[si];
+        int ivalue = (*this)[si];
         value_type mask = ((value_type)256 << (si << 2)) - 1;
         x_ = ((x_ + 1) & (((value_type)16 << (di << 2)) - 1)) |
-             ((value_type)value << ((di << 2) + 4)) |
+             ((value_type)ivalue << ((di << 2) + 4)) |
              ((x_ << 4) & mask & ~(((value_type)256 << (di << 2)) - 1)) |
              (x_ & ~mask);
     }
@@ -190,7 +190,7 @@ class Kpermuter
     void exchange_values(int x, int y)
     {
         value_type diff = 0, p = x_;
-        for (int i = 0; i < width; ++i, diff <<= 4, p <<= 4)
+        for (uint32_t i = 0; i < width; ++i, diff <<= 4, p <<= 4)
         {
             int v = (p >> (width << 2)) & 15;
             diff ^= -((v == x) | (v == y)) & (x ^ y);

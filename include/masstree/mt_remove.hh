@@ -269,4 +269,115 @@ void TCursor::redirect(InterNode *n, uint64_t ikey,
     n->unlock();
 }
 
+struct DestroyRcuCallback : public MrcuCallback
+{
+    NodeBase *root_;
+    int count_;
+    DestroyRcuCallback(NodeBase *root)
+        : root_(root), count_(0)
+    {
+    }
+    void operator()(ThreadInfo *ti);
+    static void make(NodeBase *root, Slice prefix, ThreadInfo *ti);
+
+  private:
+    static inline NodeBase **link_ptr(NodeBase *n);
+    static inline void enqueue(NodeBase *n, NodeBase **&tailp);
+};
+
+inline NodeBase **DestroyRcuCallback::link_ptr(NodeBase *n)
+{
+    if (n->isleaf())
+    {
+        return &static_cast<Leaf *>(n)->parent_;
+    }
+    else
+    {
+        return &static_cast<InterNode *>(n)->parent_;
+    }
+}
+
+inline void DestroyRcuCallback::enqueue(NodeBase *n, NodeBase **&tailp)
+{
+    *tailp = n;
+    tailp = link_ptr(n);
+}
+
+void DestroyRcuCallback::operator()(ThreadInfo *ti)
+{
+    if (++count_ == 1)
+    {
+        while (!root_->is_root())
+        {
+            root_ = root_->maybe_parent();
+        }
+        root_->lock();
+        root_->mark_deleted_tree(); // i.e., deleted but not splitting
+        root_->unlock();
+        ti->register_rcu(this);
+        log("DestroyRcuCallback first called");
+        return;
+    }
+
+    log("DestroyRcuCallback second called");
+
+    NodeBase *workq;
+    NodeBase **tailp = &workq;
+    enqueue(root_, tailp);
+
+    while (NodeBase *n = workq)
+    {
+        NodeBase **linkp = link_ptr(n);
+        if (linkp != tailp)
+        {
+            workq = *linkp;
+        }
+        else
+        {
+            workq = nullptr;
+            tailp = &workq;
+        }
+
+        if (n->isleaf())
+        {
+            Leaf *l = static_cast<Leaf *>(n);
+            Leaf::permuter_type perm = l->permutation();
+            for (int i = 0; i != l->size(); i++)
+            {
+                int p = perm[i];
+                if (l->is_layer(p))
+                {
+                    enqueue(l->lv_[p].layer(), tailp);
+                }
+            }
+            l->deallocate(ti);
+        }
+        else
+        {
+            InterNode *in = static_cast<InterNode *>(n);
+            for (int i = 0; i != in->size() + 1; ++i)
+            {
+                if (in->child_[i])
+                {
+                    enqueue(in->child_[i], tailp);
+                }
+            }
+            in->deallocate(ti);
+        }
+    }
+    ti->dealloc(this);
+}
+
+// 如果BasicTable中还有value，则value值并没有被释放 
+void BasicTable::destroy(ThreadInfo *ti)
+{
+    if (root_)
+    {
+        void *data = ti->alloc(sizeof(DestroyRcuCallback));
+        DestroyRcuCallback *cb = new (data) DestroyRcuCallback(root_);
+        ti->register_rcu(cb);
+        root_ = nullptr;
+    }
+}
+
 } // namespace lf

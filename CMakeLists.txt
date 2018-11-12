@@ -3,10 +3,25 @@ cmake_minimum_required(VERSION 2.6.2)
 project( lf-distribution )
 set (CMAKE_BUILD_TYPE Debug)
 
+#gtest
+#SET(GTEST_ROOT /home/tongxingguo/work/install)
+#find_package(GTest)
+#if(GTEST_FOUND)
+#    enable_testing()
+#    message("GTest found, enable_testing")
+#    include_directories(${GTEST_INCLUDE_DIRS})
+#endif()
+
+#rocksdb
+#SET(ROCKSDB_LIBRARIES /home/tongxingguo/work/install/lib/librocksdb.a)
+
 set(SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
 # x86 unaligned access available
 add_definitions(-DHAVE_UNALIGNED_ACCESS)
+
+include(cmake/internal_utils.cmake)
+config_compiler_and_linker()
 
 include_directories(
     ${SOURCE_DIR}/include
@@ -36,6 +51,7 @@ set(HEADER
     include/lf/limbo.hh
     include/lf/wfmcas.hh
     include/lf/lf.hh
+    include/lf/masstree.hh
     #posix
     include/lf/posix_logger.hh
     include/lf/random.hh
@@ -68,26 +84,26 @@ set(SOURCE
     src/masstree/mt_key.cc
 )
 
-add_executable(lf-test ${HEADER} ${SOURCE} main.cc)
-target_compile_options( lf-test PUBLIC -std=c++11 -w -Wall )
-target_link_libraries(lf-test pthread)
+LIST(APPEND LF_DEF
+    pthread
+)
 
-add_executable(test-std-map test_std_map.cc)
-target_compile_options( test-std-map PUBLIC -std=c++11 -w -Wall )
-target_link_libraries(test-std-map pthread)
+#add_executable(wfmcas-test ${HEADER} ${SOURCE} test/wfmcas-test.cc)
+#target_compile_options( wfmcas-test PUBLIC -std=c++11 -w -Wall )
+#target_link_libraries(wfmcas-test pthread)
 
-add_executable(test-limbo ${HEADER} ${SOURCE} test/limbo-test.cc)
-target_compile_options( test-limbo PUBLIC -std=c++11 -w -Wall )
-target_link_libraries(test-limbo pthread)
+cxx_shared_library(lf "${cxx_strict}" "${LF_DEF}" "${SOURCE}")
 
-add_executable(test-odd ${HEADER} ${SOURCE} test/odd_test.cc)
-target_compile_options( test-odd PUBLIC -std=c++11 -w -Wall )
-target_link_libraries(test-odd pthread)
+cxx_executable(lf-test "test" "lf")
+cxx_executable(test-std-map "test" "lf")
+cxx_executable(limbo-test "test" "lf")
+cxx_executable(odd_test "test" "lf")
+cxx_executable(wfmcas-test "test" "lf")
+cxx_executable(unit-mt-test "test" "lf")
+#cxx_executable(rocksdb-option-test "test" "lf;${ROCKSDB_LIBRARIES};pthread;snappy;z;bz2;lz4")
 
-add_executable(test-wfmcas ${HEADER} ${SOURCE} test/wfmcas-test.cc)
-target_compile_options( test-wfmcas PUBLIC -std=c++11 -w -Wall )
-target_link_libraries(test-wfmcas pthread)
+IF(GTEST_FOUND)
+    cxx_test(gtest-mtkey "lf;${GTEST_BOTH_LIBRARIES};${CMAKE_THREAD_LIBS_INIT}")
+    cxx_test(gtest-mtstruct "lf;${GTEST_BOTH_LIBRARIES};${CMAKE_THREAD_LIBS_INIT}")
+ENDIF()
 
-add_executable(test-unit-mt ${HEADER} ${SOURCE} test/unit-mt-test.cc)
-target_compile_options( test-unit-mt PUBLIC -std=c++11 -w -Wall )
-target_link_libraries(test-unit-mt pthread)

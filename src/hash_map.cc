@@ -163,7 +163,7 @@ static int lfind_match(SList *volatile *head,
                        hash_match_func *match,
                        Cursor *cursor, Pins *pins)
 {
-    int32_t cur_hashnr;
+    uint32_t cur_hashnr;
     intptr_t link;
 
 retry:

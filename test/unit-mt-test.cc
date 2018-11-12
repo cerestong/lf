@@ -1,18 +1,14 @@
 #include <thread>
 #include "lf/time_util.hh"
 #include "lf/logger.hh"
-#include "masstree/mt_struct.hh"
-#include "masstree/mt_tcursor.hh"
-#include "masstree/mt_insert.hh"
-#include "masstree/mt_remove.hh"
-#include "masstree/mt_print.hh"
-#include "masstree/mt_scan.hh"
+#include "lf/masstree.hh"
+#include "lf/lf.hh"
 
 using namespace lf;
 
-namespace lf {
-    uint64_t initial_timestamp = 0;
-}
+// namespace lf {
+//     uint64_t initial_timestamp = 0;
+// }
 
 struct Ctx
 {
@@ -50,11 +46,12 @@ struct ScanTester
     }
 
     void visit_leaf(const ScanStackElt&, const MtKey&, ThreadInfo *)
-    {}
+    {
+    }
 
     bool visit_value(Slice key, LeafValue &val, ThreadInfo *)
     {
-        fprintf(stderr, "scan %.*s\n", key.size(), key.data());
+        fprintf(stderr, "scan %.*s\n", (int)(key.size()), key.data());
         return key.compare(vend_) < 0 ? true : false; 
     }
 
@@ -78,6 +75,11 @@ class MasstreeWrapper
     void table_init(lf::ThreadInfo *ti)
     {
         table_.initialize(ti);
+    }
+
+    void table_destroy(lf::ThreadInfo *ti)
+    {
+        table_.destroy(ti);
     }
 
     bool insert(uint64_t k, intptr_t val, ThreadInfo *ti)
@@ -194,7 +196,7 @@ class MasstreeWrapper
 
     static inline lf::Slice make_key(uint64_t int_key, char *key_buf, size_t key_buf_len)
     {
-        int n = snprintf(key_buf, key_buf_len, "%llu", int_key);
+        int n = snprintf(key_buf, key_buf_len, "%lu", int_key);
         return lf::Slice((const char *)key_buf, n);
     }
 };
@@ -203,7 +205,7 @@ void multi_thread_test(int thd_no)
 {
     MasstreeWrapper mw;
 
-    lf::g_all_threads = new std::vector<lf::ThreadInfo>(thd_no);
+    lf::init_lf_library(thd_no);
     mw.table_init(&((*lf::g_all_threads)[0]));
 
     Ctx *ctx = new Ctx[thd_no];
@@ -230,6 +232,10 @@ void multi_thread_test(int thd_no)
         total_loop += ctx[i].loop_cnt;
     }
 
+    mw.table_destroy(ctx[0].ti);
+    // 主动触发一次内存回�?
+    ctx[0].ti->hard_free();
+
     double d = ((double)(max_end - min_begin)) * 1e-6;
 
     lf::log("total loop_cnt %lld in %lld micros, %g/s",
@@ -237,6 +243,7 @@ void multi_thread_test(int thd_no)
             (double)total_loop / d);
 
     delete[] ctx;
+    lf::deinit_lf_library();
 }
 
 int main(int argc, char *argv[])

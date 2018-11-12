@@ -295,6 +295,7 @@ struct spin_hint_function
 inline uint64_t ntohq(uint64_t val)
 {
 #ifdef __i386__
+    #error i386 is defined
     union {
         struct {
             uint32_t a;
@@ -319,19 +320,25 @@ inline uint64_t htonq(uint64_t val)
 
 inline uint64_t net_to_host_order(uint64_t x)
 {
-    return ntohq(x);
+    return be64toh(x);
+    //return ntohq(x);
 }
 
 inline uint64_t host_to_net_order(uint64_t x)
 {
-    return htonq(x);
+    return htobe64(x);
+    //return htonq(x);
 }
 
+// Returns the number of trailing 0-bits in x,starting at the least significant bit position.
+// if x is 0, the result is undefined.
 inline int ctz(uint64_t x)
 {
     return __builtin_ctzll(x);
 }
 
+// Returns the number of leading 0-bits in x, starting at the most significant bit position.
+// if x is 0, the result is undefined.
 inline int clz(long long x)
 {
     return __builtin_clzll(x);
